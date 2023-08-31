@@ -4,7 +4,8 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tracing::{info, warn};
 
 use super::{
-    outgoing, Capabilities, Error, IncomingRequest as Request, OpenIdResponse, OpenIdStatus, Result,
+    outgoing::{CapabilitiesRequest, CapabilitiesUpdate, OpenIdCredentialsUpdate},
+    Capabilities, Error, IncomingRequest as Request, OpenIdResponse, OpenIdStatus, Result,
 };
 use crate::widget::{
     client::{MatrixDriver, WidgetProxy},
@@ -85,7 +86,7 @@ impl<T: PermissionsProvider> State<T> {
                 if let Some(handle) = handle {
                     let status = handle.await.map_err(|_| Error::WidgetDisconnected)?;
                     self.widget
-                        .send(outgoing::OpenIdUpdated(status.into()))
+                        .send(OpenIdCredentialsUpdate::new(status.into()))
                         .await?
                         .map_err(Error::WidgetErrorReply)?;
                 }
@@ -120,7 +121,7 @@ impl<T: PermissionsProvider> State<T> {
     async fn initialize(&mut self) -> Result<()> {
         let CapabilitiesResponse { capabilities: desired } = self
             .widget
-            .send(outgoing::CapabilitiesRequest)
+            .send(CapabilitiesRequest::new(Empty {}))
             .await?
             .map_err(Error::WidgetErrorReply)?;
 
@@ -130,7 +131,7 @@ impl<T: PermissionsProvider> State<T> {
 
         let update = CapabilitiesUpdatedRequest { requested: desired, approved };
         self.widget
-            .send(outgoing::CapabilitiesUpdate(update))
+            .send(CapabilitiesUpdate::new(update))
             .await?
             .map_err(Error::WidgetErrorReply)?;
 

@@ -7,12 +7,6 @@ pub enum Kind<Req, Resp> {
     Request(Request<Req>),
 }
 
-impl<T> Kind<Empty, T> {
-    pub fn empty() -> Self {
-        Kind::Request(Request::empty())
-    }
-}
-
 impl<Req, Resp> Kind<Req, Resp> {
     pub fn request(content: Req) -> Self {
         Kind::Request(Request::new(content))
@@ -28,12 +22,6 @@ pub struct Request<T> {
 impl<T> Request<T> {
     pub fn new(content: T) -> Self {
         Self { content }
-    }
-}
-
-impl Request<Empty> {
-    pub const fn empty() -> Self {
-        Self { content: Empty {} }
     }
 }
 
