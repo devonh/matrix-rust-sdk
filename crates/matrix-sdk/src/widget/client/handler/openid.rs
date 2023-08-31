@@ -1,3 +1,5 @@
+//! OpenID types that could be used when requesting OIDC tokens.
+
 use super::{OpenIdResponse, OpenIdState, Receiver};
 
 #[derive(Debug)]

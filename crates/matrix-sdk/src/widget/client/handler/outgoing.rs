@@ -1,3 +1,5 @@
+//! Ougoing requests (client -> widget).
+
 use crate::widget::messages::{
     to_widget::{Action, CapabilitiesResponse, CapabilitiesUpdatedRequest},
     Empty, MessageKind as Kind, OpenIdResponse,
