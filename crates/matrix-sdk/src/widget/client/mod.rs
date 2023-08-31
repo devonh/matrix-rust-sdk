@@ -93,9 +93,17 @@ pub(super) async fn run<T: PermissionsProvider>(
 /// **we** send to the widget).
 type PendingResponses = Arc<Mutex<HashMap<String, oneshot::Sender<ToWidgetAction>>>>;
 
+/// Handles interaction with a widget. Essentially, it's a proxy to the widget
+/// that adds some additional type-safety and a convenient "higher level" access
+/// to the widget (convenient `async` function that receives a request and
+/// returns once the response is received, validated and matched, etc).
 pub(crate) struct WidgetProxy {
+    /// Widget settings.
     info: WidgetInfo,
+    /// Raw communication channel to send `String`s (JSON) to the widget.
     sink: Sender<String>,
+    /// Map that stores pending responses for the **outgoing requests**
+    /// (requests that **we** send to the widget).
     pending: PendingResponses,
 }
 
@@ -104,6 +112,8 @@ impl WidgetProxy {
         Self { info, sink, pending }
     }
 
+    /// Sends a request to the widget, returns the response from the widget once
+    /// received.
     async fn send<T: OutgoingRequest>(&self, msg: T) -> Result<OutgoingResponse<T::Response>> {
         let id = Uuid::new_v4().to_string();
         let message = {
@@ -119,12 +129,18 @@ impl WidgetProxy {
         T::extract_response(reply).ok_or(Error::custom("Widget sent invalid response"))
     }
 
+    /// Sends a reply to one of the incoming requests from the widget. The reply
+    /// itself can only be constructed from a valid incoming request, so we
+    /// ensure that only valid replies could be constructed. Error is returned
+    /// if the reply cannot be sent due to the widget being disconnected.
     async fn reply(&self, response: IncomingResponse) -> StdResult<(), ()> {
         let message: Message = response.into();
         let json = to_json(&message).expect("Bug: can't serialise a message");
         self.sink.send(json).await.map_err(|_| ())
     }
 
+    /// Tells whether or not we should negotiate supported capabilities on
+    /// `ContentLoad` or not (if `false`, they are negotiated right away).
     fn init_on_load(&self) -> bool {
         self.info.init_on_load
     }

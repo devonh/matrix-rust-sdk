@@ -1,3 +1,5 @@
+//! Client-side state machine for handling incoming requests from a widget.
+
 use std::sync::Arc;
 
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -17,45 +19,46 @@ use crate::widget::{
     Permissions, PermissionsProvider,
 };
 
+/// State of our client API state machine that handles incoming messages and
+/// advances the state.
 pub(super) struct State<T> {
     capabilities: Option<Capabilities>,
     widget: Arc<WidgetProxy>,
     client: MatrixDriver<T>,
 }
 
-pub(crate) enum Task {
-    NegotiateCapabilities,
-    HandleIncoming(Request),
-}
-
 impl<T: PermissionsProvider> State<T> {
+    /// Creates a new [`Self`] with a given proxy and a matrix driver.
     pub(super) fn new(widget: Arc<WidgetProxy>, client: MatrixDriver<T>) -> Self {
         Self { capabilities: None, widget, client }
     }
 
-    pub(super) async fn listen(mut self, mut rx: UnboundedReceiver<Task>) {
-        while let Some(msg) = rx.recv().await {
-            match msg {
-                Task::HandleIncoming(request) => {
-                    if let Err(err) = self.handle(request.clone()).await {
-                        if let Err(..) = self.widget.reply(request.fail(err.to_string())).await {
-                            info!("Dropped reply, widget is disconnected");
-                            break;
-                        }
-                    }
-                }
-                Task::NegotiateCapabilities => {
-                    if let Err(err) = self.initialize().await {
-                        // We really don't have a mechanism to inform a widget about out of bound
-                        // errors. So the only thing we can do here is to log it.
-                        warn!(error = %err, "Failed to initialize widget");
-                        break;
-                    }
+    /// Start a task that will listen to the `rx` for new incoming requests from
+    /// a widget and process them.
+    pub(super) async fn listen(mut self, mut rx: UnboundedReceiver<Request>) {
+        // Typically, widget's capabilities are initialized on a special `ContentLoad`
+        // message. However, if this flag is set, we must initialize them right away.
+        if !self.widget.init_on_load() {
+            if let Err(err) = self.initialize().await {
+                // We really don't have a mechanism to inform a widget about out of bound
+                // errors. So the only thing we can do here is to log it.
+                warn!(error = %err, "Failed to initialize widget");
+                return;
+            }
+        }
+
+        // Handle incoming requests from a widget.
+        while let Some(request) = rx.recv().await {
+            if let Err(err) = self.handle(request.clone()).await {
+                if let Err(..) = self.widget.reply(request.fail(err.to_string())).await {
+                    info!("Dropped reply, widget is disconnected");
+                    break;
                 }
             }
         }
     }
 
+    /// Handles a given incoming request from a widget.
     async fn handle(&mut self, request: Request) -> Result<()> {
         match request {
             Request::GetSupportedApiVersion(req) => {
@@ -118,6 +121,9 @@ impl<T: PermissionsProvider> State<T> {
         Ok(())
     }
 
+    /// Performs capability negotiation with a widget. This initialization
+    /// is typically performed at the beginning (either once a `ContentLoad` is
+    /// received or once the widget is connected, depending on widget settings).
     async fn initialize(&mut self) -> Result<()> {
         let CapabilitiesResponse { capabilities: desired } = self
             .widget
