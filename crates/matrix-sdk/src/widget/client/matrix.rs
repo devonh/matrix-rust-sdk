@@ -18,10 +18,11 @@ use crate::{
         messages::{
             from_widget::{
                 ReadEventRequest, ReadEventResponse, SendEventRequest, SendEventResponse,
+                StateKeySelector,
             },
             OpenIdRequest, OpenIdState,
         },
-        Permissions, PermissionsProvider,
+        Permissions, PermissionsProvider, StateEventFilter,
     },
 };
 
@@ -120,29 +121,44 @@ impl EventServerProxy {
     }
 
     pub(crate) async fn read(&self, req: ReadEventRequest) -> Result<ReadEventResponse> {
+        let limit = req.limit.unwrap_or(match req.state_key {
+            Some(..) => 1, // Default state events limit.
+            None => 50,    // Default message-like events limit.
+        });
+
         let options = assign!(MessagesOptions::backward(), {
-            limit: req.limit.into(),
+            limit: limit.into(),
             filter: assign!(RoomEventFilter::default(), {
                 types: Some(vec![req.event_type.to_string()])
             })
         });
 
+        // There may be an additional state key filter depending on the `req.state_key`.
+        let state_key_filter = move |ev: &MatrixEventFilterInput| -> bool {
+            if let Some(StateKeySelector::Key(state_key)) = req.state_key.clone() {
+                EventFilter::State(StateEventFilter::WithTypeAndStateKey(
+                    req.event_type.to_string().into(),
+                    state_key,
+                ))
+                .matches(ev)
+            } else {
+                true
+            }
+        };
+
         // Fetch messages from the server.
         let messages = self.room.messages(options).await.map_err(Error::other)?;
 
-        // TODO: These are not the events we requested, just extra context
-        // Make sure we don't need this, and delete these three lines.
-        //let state = messages.state.into_iter().map(|s|
-        // s.deserialize_as::<MatrixEvent>());
-
-        // Run the timeline events through the filter.
+        // Filter the timeline events.
         let events = messages
             .chunk
             .into_iter()
             .map(|ev| ev.event.cast())
             // TODO: Log events that failed to decrypt?
             .filter(|raw| match raw.deserialize_as() {
-                Ok(de_helper) => self.filters.any_matches(&de_helper),
+                Ok(de_helper) => {
+                    self.filters.any_matches(&de_helper) && state_key_filter(&de_helper)
+                }
                 Err(e) => {
                     warn!("Failed to deserialize timeline event: {e}");
                     false
