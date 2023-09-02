@@ -1,11 +1,6 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Request {
-    pub id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct State {
     #[serde(rename = "original_request_id")]
     pub id: String,

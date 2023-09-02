@@ -4,7 +4,7 @@ use ruma::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::widget::messages::{Empty, MessageKind, OpenIdRequest, OpenIdResponse};
+use crate::widget::messages::{Empty, MessageKind, OpenIdResponse};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "action")]
@@ -14,7 +14,7 @@ pub(crate) enum Action {
     #[serde(rename = "content_loaded")]
     ContentLoaded(MessageKind<Empty, Empty>),
     #[serde(rename = "get_openid")]
-    GetOpenId(MessageKind<OpenIdRequest, OpenIdResponse>),
+    GetOpenId(MessageKind<Empty, OpenIdResponse>),
     #[serde(rename = "send_event")]
     SendEvent(MessageKind<SendEventRequest, SendEventResponse>),
     #[serde(rename = "org.matrix.msc2876.read_events")]

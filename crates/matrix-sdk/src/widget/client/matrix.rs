@@ -20,7 +20,7 @@ use crate::{
                 ReadEventRequest, ReadEventResponse, SendEventRequest, SendEventResponse,
                 StateKeySelector,
             },
-            OpenIdRequest, OpenIdState,
+            OpenIdState,
         },
         Permissions, PermissionsProvider, StateEventFilter,
     },
@@ -58,7 +58,7 @@ impl<T> Driver<T> {
         }
     }
 
-    pub(crate) fn get_openid(&self, req: OpenIdRequest) -> OpenIdStatus {
+    pub(crate) fn get_openid(&self, request_id: String) -> OpenIdStatus {
         let user_id = self.room.own_user_id().to_owned();
         let client = self.room.client.clone();
         let (tx, rx) = oneshot::channel();
@@ -69,7 +69,7 @@ impl<T> Driver<T> {
                     .await
                     .map(|res| {
                         OpenIdDecision::Allowed(OpenIdState {
-                            id: req.id,
+                            id: request_id,
                             token: res.access_token,
                             expires_in_seconds: res.expires_in.as_secs() as usize,
                             server: res.matrix_server_name.to_string(),
