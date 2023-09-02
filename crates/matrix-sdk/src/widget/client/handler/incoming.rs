@@ -5,7 +5,7 @@ use std::ops::Deref;
 
 use crate::widget::messages::{
     from_widget::{self, Action, SupportedApiVersionsResponse},
-    Action as ActionType, Empty, Header, Message, MessageKind, OpenIdRequest, OpenIdResponse,
+    Action as ActionType, Empty, Header, Message, MessageKind, OpenIdResponse,
     Request as RequestBody,
 };
 
@@ -56,6 +56,11 @@ macro_rules! generate_requests {
                         header: self.0.header,
                     }
                 }
+
+                #[allow(dead_code)]
+                pub(crate) fn id(&self) -> &str {
+                    &self.0.header.request_id
+                }
             }
 
             impl Deref for $request {
@@ -74,7 +79,7 @@ macro_rules! generate_requests {
 generate_requests! {
     GetSupportedApiVersion(Empty) -> SupportedApiVersionsResponse,
     ContentLoaded(Empty) -> Empty,
-    GetOpenId(OpenIdRequest) -> OpenIdResponse,
+    GetOpenId(Empty) -> OpenIdResponse,
     SendEvent(from_widget::SendEventRequest) -> from_widget::SendEventResponse,
     ReadEvent(from_widget::ReadEventRequest) -> from_widget::ReadEventResponse,
 }

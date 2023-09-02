@@ -80,7 +80,7 @@ impl<T: PermissionsProvider> State<T> {
             }
 
             Request::GetOpenId(req) => {
-                let (reply, handle) = match self.client.get_openid((*req).clone()) {
+                let (reply, handle) = match self.client.get_openid(req.id().to_owned()) {
                     OpenIdStatus::Resolved(decision) => (decision.into(), None),
                     OpenIdStatus::Pending(handle) => (OpenIdResponse::Pending, Some(handle)),
                 };

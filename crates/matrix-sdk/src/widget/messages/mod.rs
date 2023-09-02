@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) use self::{
     actions::{from_widget, to_widget, Action, Empty, MessageKind, Request},
-    openid::{Request as OpenIdRequest, Response as OpenIdResponse, State as OpenIdState},
+    openid::{Response as OpenIdResponse, State as OpenIdState},
 };
 
 mod actions;
