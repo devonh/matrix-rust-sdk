@@ -14,7 +14,7 @@ use tokio::sync::oneshot;
 use tracing::warn;
 use uuid::Uuid;
 
-use self::handler::{IncomingResponse, MessageHandler, OutgoingRequest, OutgoingResponse};
+use self::handler::{IncomingResponse, MessageHandler, OutgoingRequest};
 pub(crate) use self::{
     handler::{Error, Result},
     matrix::Driver as MatrixDriver,
@@ -114,7 +114,7 @@ impl WidgetProxy {
 
     /// Sends a request to the widget, returns the response from the widget once
     /// received.
-    async fn send<T: OutgoingRequest>(&self, msg: T) -> Result<OutgoingResponse<T::Response>> {
+    async fn send<T: OutgoingRequest>(&self, msg: T) -> Result<T::Response> {
         let id = Uuid::new_v4().to_string();
         let message = {
             let header = Header::new(&id, &self.info.id);
@@ -126,7 +126,9 @@ impl WidgetProxy {
         let (tx, rx) = oneshot::channel();
         self.pending.lock().expect("Pending mutex poisoned").insert(id, tx);
         let reply = rx.await.map_err(|_| Error::WidgetDisconnected)?;
-        T::extract_response(reply).ok_or(Error::custom("Widget sent invalid response"))
+        T::extract_response(reply)
+            .ok_or(Error::custom("Widget sent invalid response"))?
+            .map_err(Error::WidgetErrorReply)
     }
 
     /// Sends a reply to one of the incoming requests from the widget. The reply

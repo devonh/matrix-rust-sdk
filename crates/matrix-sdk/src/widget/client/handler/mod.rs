@@ -13,7 +13,7 @@ pub(crate) use self::{
     error::{Error, Result},
     incoming::{Request as IncomingRequest, Response as IncomingResponse},
     openid::{OpenIdDecision, OpenIdStatus},
-    outgoing::{Request as OutgoingRequest, Response as OutgoingResponse},
+    outgoing::Request as OutgoingRequest,
 };
 use super::{MatrixDriver, WidgetProxy};
 use crate::widget::{
