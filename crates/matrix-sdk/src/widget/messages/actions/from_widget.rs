@@ -85,7 +85,6 @@ pub(crate) struct ReadEventRequest {
     pub event_type: TimelineEventType,
     pub limit: Option<u32>,
     pub state_key: Option<StateKeySelector>,
-    pub room_ids: Option<Vec<String>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
