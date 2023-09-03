@@ -5,8 +5,8 @@ use std::ops::Deref;
 
 use crate::widget::messages::{
     from_widget::{self, Action, SupportedApiVersionsResponse},
-    Action as ActionType, Empty, Header, Message, MessageKind, OpenIdResponse,
-    Request as RequestBody,
+    Action as ActionType, Empty, ErrorBody, ErrorMessage, Header, Message, MessageKind,
+    OpenIdResponse, Request as RequestBody,
 };
 
 // Generates a bunch of request types and their responses. In particular:
@@ -25,14 +25,19 @@ macro_rules! generate_requests {
         }
 
         impl Request {
-            pub(crate) fn new(header: Header, action: Action) -> Option<Self> {
+            pub(crate) fn new(header: Header, action: Action) -> Result<Self, ErrorResponse> {
                 match action {
                     $(
                         from_widget::Action::$request(MessageKind::Request(r)) => {
-                            Some(Self::$request($request(WithHeader::new(header, r))))
+                            Ok(Self::$request($request(WithHeader::new(header, r))))
                         }
                     )*
-                    _ => None,
+                    _ => {
+                        Err(ErrorResponse {
+                            header,
+                            data: ErrorBody::new("Invalid request from a widget"),
+                        })
+                    }
                 }
             }
 
@@ -87,10 +92,25 @@ generate_requests! {
 /// Represents a response that could be sent back to a widget.
 pub(crate) type Response = WithHeader<Action>;
 
+/// Represents an error message that we send to the widget in case of an invalid
+/// message.
+pub(crate) type ErrorResponse = WithHeader<ErrorBody>;
+
 /// We can construct a `Message` once we get a valid `Response`.
 impl From<Response> for Message {
     fn from(response: Response) -> Self {
         Self { header: response.header, action: ActionType::FromWidget(response.data) }
+    }
+}
+
+// Or an `ErrorMessage` if we get an invalid response.
+impl From<ErrorResponse> for ErrorMessage {
+    fn from(response: ErrorResponse) -> Self {
+        Self {
+            widget_id: response.header.widget_id,
+            request_id: Some(response.header.request_id),
+            response: response.data,
+        }
     }
 }
 

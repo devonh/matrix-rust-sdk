@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 pub(crate) use self::{
-    actions::{from_widget, to_widget, Action, Empty, MessageKind, Request},
+    actions::{from_widget, to_widget, Action, Empty, ErrorBody, MessageKind, Request},
     openid::{Response as OpenIdResponse, State as OpenIdState},
 };
 
@@ -35,4 +35,12 @@ impl Header {
     pub fn new(request_id: impl Into<String>, widget_id: impl Into<String>) -> Self {
         Self { request_id: request_id.into(), widget_id: widget_id.into() }
     }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ErrorMessage {
+    pub widget_id: String,
+    pub request_id: Option<String>,
+    pub response: ErrorBody,
 }
