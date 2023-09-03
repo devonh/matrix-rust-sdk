@@ -7,7 +7,8 @@ use tracing::{info, warn};
 
 use super::{
     outgoing::{CapabilitiesRequest, CapabilitiesUpdate, OpenIdCredentialsUpdate},
-    Capabilities, Error, IncomingRequest as Request, OpenIdResponse, OpenIdStatus, Result,
+    Capabilities, Error, IncomingRequest as Request, IncomingResponse as Response, OpenIdResponse,
+    OpenIdStatus, Result,
 };
 use crate::widget::{
     client::{MatrixDriver, WidgetProxy},
@@ -16,7 +17,7 @@ use crate::widget::{
         to_widget::{CapabilitiesResponse, CapabilitiesUpdatedRequest},
         Empty,
     },
-    Permissions, PermissionsProvider,
+    PermissionsProvider,
 };
 
 /// State of our client API state machine that handles incoming messages and
@@ -50,7 +51,7 @@ impl<T: PermissionsProvider> State<T> {
         // Handle incoming requests from a widget.
         while let Some(request) = rx.recv().await {
             if let Err(err) = self.handle(request.clone()).await {
-                if let Err(..) = self.widget.reply(request.fail(err.to_string())).await {
+                if let Err(..) = self.reply(request.fail(err.to_string())).await {
                     info!("Dropped reply, widget is disconnected");
                     break;
                 }
@@ -62,7 +63,7 @@ impl<T: PermissionsProvider> State<T> {
     async fn handle(&mut self, request: Request) -> Result<()> {
         match request {
             Request::GetSupportedApiVersion(req) => {
-                let _ = self.widget.reply(req.map(Ok(SupportedApiVersionsResponse::new())));
+                self.reply(req.map(Ok(SupportedApiVersionsResponse::new()))).await?;
             }
 
             Request::ContentLoaded(req) => {
@@ -73,7 +74,7 @@ impl<T: PermissionsProvider> State<T> {
                         _ => (Ok(Empty {}), false),
                     };
 
-                let _ = self.widget.reply(req.map(response)).await;
+                self.reply(req.map(response)).await?;
                 if negotiate {
                     self.initialize().await?;
                 }
@@ -85,13 +86,10 @@ impl<T: PermissionsProvider> State<T> {
                     OpenIdStatus::Pending(handle) => (OpenIdResponse::Pending, Some(handle)),
                 };
 
-                let _ = self.widget.reply(req.map(Ok(reply)));
+                self.reply(req.map(Ok(reply))).await?;
                 if let Some(handle) = handle {
                     let status = handle.await.map_err(|_| Error::WidgetDisconnected)?;
-                    self.widget
-                        .send(OpenIdCredentialsUpdate::new(status.into()))
-                        .await?
-                        .map_err(Error::WidgetErrorReply)?;
+                    self.widget.send(OpenIdCredentialsUpdate::new(status.into())).await?;
                 }
             }
 
@@ -102,8 +100,8 @@ impl<T: PermissionsProvider> State<T> {
                     .as_ref()
                     .ok_or(Error::custom("No permissions to read events"))?
                     .read((*req).clone());
-                let resp = Ok(fut.await?);
-                let _ = self.widget.reply(req.map(resp)).await;
+                let response = req.map(Ok(fut.await?));
+                self.reply(response).await?;
             }
 
             Request::SendEvent(req) => {
@@ -113,8 +111,8 @@ impl<T: PermissionsProvider> State<T> {
                     .as_ref()
                     .ok_or(Error::custom("No permissions to send events"))?
                     .send((*req).clone());
-                let resp = Ok(fut.await?);
-                let _ = self.widget.reply(req.map(resp)).await;
+                let response = req.map(Ok(fut.await?));
+                self.reply(response).await?;
             }
         }
 
@@ -125,23 +123,23 @@ impl<T: PermissionsProvider> State<T> {
     /// is typically performed at the beginning (either once a `ContentLoad` is
     /// received or once the widget is connected, depending on widget settings).
     async fn initialize(&mut self) -> Result<()> {
-        let CapabilitiesResponse { capabilities: desired } = self
-            .widget
-            .send(CapabilitiesRequest::new(Empty {}))
-            .await?
-            .map_err(Error::WidgetErrorReply)?;
+        let CapabilitiesResponse { capabilities: desired } =
+            self.widget.send(CapabilitiesRequest::new(Empty {})).await?;
 
-        let capabilities = self.client.initialize(desired.clone()).await;
-        let approved: Permissions = (&capabilities).into();
-        self.capabilities = Some(capabilities);
+        self.capabilities.replace(self.client.initialize(desired.clone()).await);
 
-        let update = CapabilitiesUpdatedRequest { requested: desired, approved };
         self.widget
-            .send(CapabilitiesUpdate::new(update))
-            .await?
-            .map_err(Error::WidgetErrorReply)?;
+            .send(CapabilitiesUpdate::new(CapabilitiesUpdatedRequest {
+                requested: desired,
+                approved: self.capabilities.as_ref().unwrap().into(),
+            }))
+            .await?;
 
         Ok(())
+    }
+
+    async fn reply(&self, response: Response) -> Result<()> {
+        self.widget.reply(response).await.map_err(|_| Error::WidgetDisconnected)
     }
 
     fn caps(&mut self) -> Result<&mut Capabilities> {
