@@ -51,7 +51,7 @@ impl<T: PermissionsProvider> State<T> {
         // Handle incoming requests from a widget.
         while let Some(request) = rx.recv().await {
             if let Err(err) = self.handle(request.clone()).await {
-                if let Err(..) = self.reply(request.fail(err.to_string())).await {
+                if self.reply(request.fail(err.to_string())).await.is_err() {
                     info!("Dropped reply, widget is disconnected");
                     break;
                 }
@@ -126,7 +126,7 @@ impl<T: PermissionsProvider> State<T> {
         let CapabilitiesResponse { capabilities: desired } =
             self.widget.send(CapabilitiesRequest::new(Empty {})).await?;
 
-        self.capabilities.replace(self.client.initialize(desired.clone()).await);
+        self.capabilities = Some(self.client.initialize(desired.clone()).await);
 
         self.widget
             .send(CapabilitiesUpdate::new(CapabilitiesUpdatedRequest {
