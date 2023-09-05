@@ -26,7 +26,7 @@ pub struct Widget {
     pub comm: Comm,
 }
 
-/// Information about a widget.
+/// Settings for a widget.
 #[derive(Debug)]
 pub struct WidgetSettings {
     /// Widget's unique identifier.
