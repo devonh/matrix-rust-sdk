@@ -25,7 +25,7 @@ impl From<Widget> for matrix_sdk::widget::Widget {
     }
 }
 
-/// Information about a widget.
+/// Settings for a widget.
 #[derive(uniffi::Record)]
 pub struct WidgetSettings {
     /// Widget's unique identifier.
