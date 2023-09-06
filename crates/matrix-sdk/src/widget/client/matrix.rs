@@ -115,7 +115,7 @@ impl<T> Driver<T> {
 
         let handle = self.room.add_event_handler(callback);
         let drop_guard = self.room.client().event_handler_drop_guard(handle);
-        self.event_handler_handle.replace(drop_guard);
+        self.event_handler_handle = Some(drop_guard);
         rx
     }
 }
