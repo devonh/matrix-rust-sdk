@@ -181,6 +181,16 @@ impl SupportedApiVersionsResponse {
     }
 }
 
+// TODO: This function currently makes a request if there are any filters, even
+// if we already know that type being requested won't match the filter. Instead,
+// we should check the filter before making the request, and when seeing the
+// response filter based on what was requested, rather than what the widget is
+// allowed to receive (probably..).
+//
+// Also, if the limit for state events is 1, i.e. only the latest event can be
+// retrieved, we should use the endpoint that is specialized for that. However,
+// we might still need the messages API if the request is uses
+// `StateKeySelector::Any`?
 pub(crate) async fn read(
     room: &Room,
     req: ReadEventRequest,
