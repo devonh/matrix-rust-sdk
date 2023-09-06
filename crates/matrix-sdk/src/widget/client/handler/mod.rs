@@ -9,7 +9,6 @@ use tokio::sync::{
 
 use self::state::State;
 pub(crate) use self::{
-    capabilities::Capabilities,
     error::{Error, Result},
     incoming::{
         ErrorResponse as IncomingErrorResponse, Request as IncomingRequest,
@@ -27,7 +26,6 @@ use crate::widget::{
     PermissionsProvider,
 };
 
-mod capabilities;
 mod error;
 mod incoming;
 mod openid;

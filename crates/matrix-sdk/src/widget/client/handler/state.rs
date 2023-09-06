@@ -2,36 +2,49 @@
 
 use std::sync::Arc;
 
+use ruma::{api::client::filter::RoomEventFilter, assign, events::AnyTimelineEvent, serde::Raw};
 use tokio::sync::mpsc::UnboundedReceiver;
 use tracing::{info, warn};
 
 use super::{
-    outgoing::{CapabilitiesRequest, CapabilitiesUpdate, OpenIdCredentialsUpdate, SendEvent},
-    Capabilities, Error, IncomingRequest as Request, IncomingResponse as Response, OpenIdResponse,
-    OpenIdStatus, Result,
+    outgoing::{CapabilitiesRequest, CapabilitiesUpdate, OpenIdCredentialsUpdate},
+    Error, IncomingRequest as Request, IncomingResponse as Response, OpenIdResponse, OpenIdStatus,
+    Result,
 };
-use crate::widget::{
-    client::{MatrixDriver, WidgetProxy},
-    messages::{
-        from_widget::{ApiVersion, SupportedApiVersionsResponse},
-        to_widget::{CapabilitiesResponse, CapabilitiesUpdatedRequest},
-        Empty,
+use crate::{
+    room::MessagesOptions,
+    widget::{
+        client::{MatrixDriver, WidgetProxy},
+        filter::{any_matches, MatrixEventFilterInput},
+        messages::{
+            from_widget::{
+                ApiVersion, ReadEventRequest, ReadEventResponse, SendEventRequest,
+                SendEventResponse, StateKeySelector, SupportedApiVersionsResponse,
+            },
+            to_widget::{CapabilitiesResponse, CapabilitiesUpdatedRequest},
+            Empty,
+        },
+        EventFilter, Permissions, PermissionsProvider, StateEventFilter,
     },
-    PermissionsProvider,
+    Room,
 };
 
 /// State of our client API state machine that handles incoming messages and
 /// advances the state.
 pub(super) struct State<T> {
-    capabilities: Option<Capabilities>,
     widget: Arc<WidgetProxy>,
     client: MatrixDriver<T>,
+    permissions: Permissions,
+    /// Receiver of incoming matrix events. `None` if we don't have permissions
+    /// to subscribe to the new events, or it hasn't been initialized yet.
+    listener: Option<UnboundedReceiver<Raw<AnyTimelineEvent>>>,
+    initialized: bool,
 }
 
 impl<T: PermissionsProvider> State<T> {
     /// Creates a new [`Self`] with a given proxy and a matrix driver.
     pub(super) fn new(widget: Arc<WidgetProxy>, client: MatrixDriver<T>) -> Self {
-        Self { capabilities: None, widget, client }
+        Self { widget, client, listener: None, permissions: Default::default(), initialized: false }
     }
 
     /// Start a task that will listen to the `rx` for new incoming requests from
@@ -67,12 +80,11 @@ impl<T: PermissionsProvider> State<T> {
             }
 
             Request::ContentLoaded(req) => {
-                let (response, negotiate) =
-                    match (self.widget.init_on_load(), self.capabilities.as_ref()) {
-                        (true, None) => (Ok(Empty {}), true),
-                        (true, Some(..)) => (Err("Already loaded".into()), false),
-                        _ => (Ok(Empty {}), false),
-                    };
+                let (response, negotiate) = match (self.widget.init_on_load(), self.initialized) {
+                    (true, false) => (Ok(Empty {}), true),
+                    (true, true) => (Err("Already loaded".into()), false),
+                    _ => (Ok(Empty {}), false),
+                };
 
                 self.reply(req.map(response)).await?;
                 if negotiate {
@@ -94,23 +106,13 @@ impl<T: PermissionsProvider> State<T> {
             }
 
             Request::ReadEvent(req) => {
-                let fut = self
-                    .caps()?
-                    .reader
-                    .as_ref()
-                    .ok_or(Error::custom("No permissions to read events"))?
-                    .read((*req).clone());
+                let fut = read(&self.client.room, (*req).clone(), &self.permissions.read);
                 let response = req.map(Ok(fut.await?));
                 self.reply(response).await?;
             }
 
             Request::SendEvent(req) => {
-                let fut = self
-                    .caps()?
-                    .sender
-                    .as_ref()
-                    .ok_or(Error::custom("No permissions to send events"))?
-                    .send((*req).clone());
+                let fut = send(&self.client.room, (*req).clone(), &self.permissions.send);
                 let response = req.map(Ok(fut.await?));
                 self.reply(response).await?;
             }
@@ -127,12 +129,12 @@ impl<T: PermissionsProvider> State<T> {
         let CapabilitiesResponse { capabilities: desired } =
             self.widget.send(CapabilitiesRequest::new(Empty {})).await?;
 
-        // Initialise the capabilities with the desired capabilities.
-        let mut capabilities = self.client.initialize(desired.clone()).await;
+        // Initialize the capabilities with the desired capabilities.
+        (self.permissions, self.listener) = self.client.initialize(desired.clone()).await;
 
         // Subscribe to the events if the widget was granted such capabilities.
         // `take()` is fine here since we never rely upon this value again.
-        if let Some(mut listener) = capabilities.listener.take() {
+        /* if let Some(mut listener) = capabilities.listener.take() {
             let widget = self.widget.clone();
             tokio::spawn(async move {
                 while let Some(event) = listener.recv().await {
@@ -149,11 +151,11 @@ impl<T: PermissionsProvider> State<T> {
         }
 
         // Update the capabilities with the approved ones and send the response back.
-        self.capabilities = Some(capabilities);
+        self.capabilities = Some(capabilities); */
         self.widget
             .send(CapabilitiesUpdate::new(CapabilitiesUpdatedRequest {
                 requested: desired,
-                approved: self.capabilities.as_ref().unwrap().into(),
+                approved: self.permissions.clone(),
             }))
             .await?;
 
@@ -162,10 +164,6 @@ impl<T: PermissionsProvider> State<T> {
 
     async fn reply(&self, response: Response) -> Result<()> {
         self.widget.reply(response).await.map_err(|_| Error::WidgetDisconnected)
-    }
-
-    fn caps(&mut self) -> Result<&mut Capabilities> {
-        self.capabilities.as_mut().ok_or(Error::custom("Capabilities have not been negotiated"))
     }
 }
 
@@ -181,4 +179,99 @@ impl SupportedApiVersionsResponse {
             ],
         }
     }
+}
+
+pub(crate) async fn read(
+    room: &Room,
+    req: ReadEventRequest,
+    filters: &[EventFilter],
+) -> Result<ReadEventResponse> {
+    if filters.is_empty() {
+        return Err(Error::custom("No permissions to read any events"));
+    }
+
+    let limit = req.limit.unwrap_or(match req.state_key {
+        Some(..) => 1, // Default state events limit.
+        None => 50,    // Default message-like events limit.
+    });
+
+    let options = assign!(MessagesOptions::backward(), {
+        limit: limit.into(),
+        filter: assign!(RoomEventFilter::default(), {
+            types: Some(vec![req.event_type.to_string()])
+        })
+    });
+
+    // There may be an additional state key filter depending on the `req.state_key`.
+    let state_key_filter = move |ev: &MatrixEventFilterInput| -> bool {
+        if let Some(StateKeySelector::Key(state_key)) = req.state_key.clone() {
+            EventFilter::State(StateEventFilter::WithTypeAndStateKey(
+                req.event_type.to_string().into(),
+                state_key,
+            ))
+            .matches(ev)
+        } else {
+            true
+        }
+    };
+
+    // Fetch messages from the server.
+    let messages = room.messages(options).await.map_err(Error::other)?;
+
+    // Filter the timeline events.
+    let events = messages
+        .chunk
+        .into_iter()
+        .map(|ev| ev.event.cast())
+        // TODO: Log events that failed to decrypt?
+        .filter(|raw| match raw.deserialize_as() {
+            Ok(filter_in) => any_matches(filters, &filter_in) && state_key_filter(&filter_in),
+            Err(e) => {
+                warn!("Failed to deserialize timeline event: {e}");
+                false
+            }
+        })
+        .collect();
+
+    Ok(ReadEventResponse { events })
+}
+
+pub(crate) async fn send(
+    room: &Room,
+    req: SendEventRequest,
+    filters: &[EventFilter],
+) -> Result<SendEventResponse> {
+    if filters.is_empty() {
+        return Err(Error::custom("No permissions to send events"));
+    }
+
+    let filter_in = MatrixEventFilterInput::from_send_event_request(req.clone());
+
+    // Run the request through the filter.
+    if !any_matches(filters, &filter_in) {
+        return Err(Error::custom("Message not allowed by filter"));
+    }
+
+    // Send the request based on whether the state key is set or not.
+    //
+    // TODO: not sure about the `*_raw` methods here, same goes for
+    // the `MatrixEvent`. I feel like stronger types would suit better here,
+    // but that's how it was originally implemented by @toger5, clarify it
+    // later once @jplatte reviews it.
+    let event_id = match req.state_key {
+        Some(state_key) => {
+            room.send_state_event_raw(req.content, &req.event_type.to_string(), &state_key)
+                .await
+                .map_err(Error::other)?
+                .event_id
+        }
+        None => {
+            room.send_raw(req.content, &req.event_type.to_string(), None)
+                .await
+                .map_err(Error::other)?
+                .event_id
+        }
+    };
+
+    Ok(SendEventResponse { room_id: room.room_id().to_owned(), event_id: event_id.to_owned() })
 }

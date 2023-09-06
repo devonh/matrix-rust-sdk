@@ -103,6 +103,10 @@ impl MatrixEventFilterInput {
     }
 }
 
+pub(super) fn any_matches(filters: &[EventFilter], event: &MatrixEventFilterInput) -> bool {
+    filters.iter().any(|f| f.matches(event))
+}
+
 #[cfg(test)]
 mod tests {
     use ruma::events::{MessageLikeEventType, StateEventType, TimelineEventType};

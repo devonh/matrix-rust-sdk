@@ -1,6 +1,7 @@
 use ruma::{
     events::{AnyTimelineEvent, TimelineEventType},
     serde::Raw,
+    OwnedEventId, OwnedRoomId,
 };
 use serde::{Deserialize, Serialize};
 
@@ -68,8 +69,8 @@ pub struct SendEventRequest {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SendEventResponse {
-    pub room_id: String,
-    pub event_id: String,
+    pub room_id: OwnedRoomId,
+    pub event_id: OwnedEventId,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

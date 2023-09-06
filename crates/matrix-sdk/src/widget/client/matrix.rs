@@ -1,28 +1,21 @@
+use std::ops::Not;
+
 use ruma::{
-    api::client::{
-        account::request_openid_token::v3::Request as MatrixOpenIdRequest, filter::RoomEventFilter,
-    },
-    assign,
+    api::client::account::request_openid_token::v3::Request as MatrixOpenIdRequest,
     events::{AnySyncTimelineEvent, AnyTimelineEvent},
     serde::Raw,
 };
 use tokio::sync::{mpsc, oneshot};
-use tracing::{info, warn};
+use tracing::info;
 
-use super::handler::{Capabilities, Error, OpenIdDecision, OpenIdStatus, Result};
+use super::handler::{OpenIdDecision, OpenIdStatus};
 use crate::{
     event_handler::EventHandlerDropGuard,
-    room::{MessagesOptions, Room},
+    room::Room,
     widget::{
-        filter::{EventFilter, MatrixEventFilterInput},
-        messages::{
-            from_widget::{
-                ReadEventRequest, ReadEventResponse, SendEventRequest, SendEventResponse,
-                StateKeySelector,
-            },
-            OpenIdState,
-        },
-        Permissions, PermissionsProvider, StateEventFilter,
+        filter::{any_matches, EventFilter, MatrixEventFilterInput},
+        messages::OpenIdState,
+        Permissions, PermissionsProvider,
     },
 };
 
@@ -32,7 +25,7 @@ pub(crate) struct Driver<T> {
     ///
     /// Expected to be a room the user is a member of (not a room in invited or
     /// left state).
-    room: Room,
+    pub(super) room: Room,
     permissions_provider: T,
     event_handler_handle: Option<EventHandlerDropGuard>,
 }
@@ -42,20 +35,20 @@ impl<T> Driver<T> {
         Self { room, permissions_provider, event_handler_handle: None }
     }
 
-    pub(crate) async fn initialize(&mut self, permissions: Permissions) -> Capabilities
+    pub(crate) async fn initialize(
+        &mut self,
+        permissions: Permissions,
+    ) -> (Permissions, Option<mpsc::UnboundedReceiver<Raw<AnyTimelineEvent>>>)
     where
         T: PermissionsProvider,
     {
         let permissions = self.permissions_provider.acquire_permissions(permissions).await;
-
-        Capabilities {
-            listener: Filters::new(permissions.read.clone())
-                .map(|filters| self.setup_matrix_event_handler(filters)),
-            reader: Filters::new(permissions.read)
-                .map(|filters| EventServerProxy::new(self.room.clone(), filters)),
-            sender: Filters::new(permissions.send)
-                .map(|filters| EventServerProxy::new(self.room.clone(), filters)),
-        }
+        let listener = permissions
+            .read
+            .is_empty()
+            .not()
+            .then(|| self.setup_matrix_event_handler(&permissions.read));
+        (permissions, listener)
     }
 
     pub(crate) fn get_openid(&self, request_id: String) -> OpenIdStatus {
@@ -90,19 +83,20 @@ impl<T> Driver<T> {
 
     fn setup_matrix_event_handler(
         &mut self,
-        filter: Filters,
+        filters: &[EventFilter],
     ) -> mpsc::UnboundedReceiver<Raw<AnyTimelineEvent>> {
         let (tx, rx) = mpsc::unbounded_channel();
-        let room_id = self.room.room_id().as_str().to_owned();
+        let room_id = self.room.room_id().to_owned();
+        let filters = filters.to_owned();
         let callback = move |raw_ev: Raw<AnySyncTimelineEvent>| {
-            let (filter, tx) = (filter.clone(), tx.clone());
+            let (filter, tx) = (filters.clone(), tx.clone());
             if let Ok(ev) = raw_ev.deserialize_as::<MatrixEventFilterInput>() {
-                filter.any_matches(&ev).then(|| {
-                    info!("received event for room: {}", room_id.clone().as_str());
+                any_matches(&filter, &ev).then(|| {
+                    info!("received event for room: {room_id}");
                     // deserialize should be possible if Raw<AnySyncTimelineEvent> is possible
                     let mut ev_value = raw_ev.deserialize_as::<serde_json::Value>().unwrap();
                     let ev_obj = ev_value.as_object_mut().unwrap();
-                    ev_obj.insert("room_id".to_owned(), room_id.clone().into());
+                    ev_obj.insert("room_id".to_owned(), room_id.to_string().into());
                     let ev_with_room_id =
                         serde_json::from_value::<Raw<AnyTimelineEvent>>(ev_value).unwrap();
                     info!("final Event: {}", ev_with_room_id.json());
@@ -117,123 +111,5 @@ impl<T> Driver<T> {
         let drop_guard = self.room.client().event_handler_drop_guard(handle);
         self.event_handler_handle = Some(drop_guard);
         rx
-    }
-}
-
-// TODO: Should this be two types? (one for reading, one for sending)
-#[derive(Debug)]
-pub struct EventServerProxy {
-    room: Room,
-    filters: Filters,
-}
-
-impl EventServerProxy {
-    fn new(room: Room, filter: Filters) -> Self {
-        Self { room, filters: filter }
-    }
-
-    pub(crate) async fn read(&self, req: ReadEventRequest) -> Result<ReadEventResponse> {
-        let limit = req.limit.unwrap_or(match req.state_key {
-            Some(..) => 50, // Default state events limit.
-            None => 50,     // Default message-like events limit.
-        });
-
-        let options = assign!(MessagesOptions::backward(), {
-            limit: limit.into(),
-            filter: assign!(RoomEventFilter::default(), {
-                types: Some(vec![req.event_type.to_string()])
-            })
-        });
-
-        // There may be an additional state key filter depending on the `req.state_key`.
-        let state_key_filter = move |ev: &MatrixEventFilterInput| -> bool {
-            if let Some(StateKeySelector::Key(state_key)) = req.state_key.clone() {
-                EventFilter::State(StateEventFilter::WithTypeAndStateKey(
-                    req.event_type.to_string().into(),
-                    state_key,
-                ))
-                .matches(ev)
-            } else {
-                true
-            }
-        };
-
-        // Fetch messages from the server.
-        let messages = self.room.messages(options).await.map_err(Error::other)?;
-
-        // Filter the timeline events.
-        let events = messages
-            .chunk
-            .into_iter()
-            .map(|ev| ev.event.cast())
-            // TODO: Log events that failed to decrypt?
-            .filter(|raw| match raw.deserialize_as() {
-                Ok(de_helper) => {
-                    self.filters.any_matches(&de_helper) && state_key_filter(&de_helper)
-                }
-                Err(e) => {
-                    warn!("Failed to deserialize timeline event: {e}");
-                    false
-                }
-            })
-            .collect();
-
-        Ok(ReadEventResponse { events })
-    }
-
-    pub(crate) async fn send(&self, req: SendEventRequest) -> Result<SendEventResponse> {
-        let de_helper = MatrixEventFilterInput::from_send_event_request(req.clone());
-
-        // Run the request through the filter.
-        if !self.filters.any_matches(&de_helper) {
-            return Err(Error::custom("Message not allowed by filter"));
-        }
-
-        // Send the request based on whether the state key is set or not.
-        //
-        // TODO: not sure about the `*_raw` methods here, same goes for
-        // the `MatrixEvent`. I feel like stronger types would suit better here,
-        // but that's how it was originally implemented by @toger5, clarify it
-        // later once @jplatte reviews it.
-        let event_id = match req.state_key {
-            Some(state_key) => {
-                self.room
-                    .send_state_event_raw(req.content, &req.event_type.to_string(), &state_key)
-                    .await
-                    .map_err(Error::other)?
-                    .event_id
-            }
-            None => {
-                self.room
-                    .send_raw(req.content, &req.event_type.to_string(), None)
-                    .await
-                    .map_err(Error::other)?
-                    .event_id
-            }
-        };
-
-        Ok(SendEventResponse {
-            room_id: self.room.room_id().to_string(),
-            event_id: event_id.to_string(),
-        })
-    }
-
-    pub(crate) fn filters(&self) -> &[EventFilter] {
-        &self.filters.filters
-    }
-}
-
-#[derive(Debug, Clone)]
-struct Filters {
-    filters: Vec<EventFilter>,
-}
-
-impl Filters {
-    fn new(filters: Vec<EventFilter>) -> Option<Self> {
-        (!filters.is_empty()).then_some(Self { filters })
-    }
-
-    fn any_matches(&self, event: &MatrixEventFilterInput) -> bool {
-        self.filters.iter().any(|f| f.matches(event))
     }
 }
