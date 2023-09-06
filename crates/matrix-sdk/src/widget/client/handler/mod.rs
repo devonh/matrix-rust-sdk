@@ -75,7 +75,7 @@ impl MessageHandler {
             // to this one. Luckily, this request is the only single one that does not depend on
             // any state, so we can handle the message right away.
             Ok(IncomingRequest::GetSupportedApiVersion(req)) => {
-                self.widget.reply(req.map(Ok(SupportedApiVersions::new()))).await.map_err(|_| ())
+                self.widget.reply(req.map(Ok(SupportedApiVersions::new()))).await
             }
             // Otherwise, send the incoming request to a worker task. This way our
             // `self.handle()` should actually never block. So the caller can call it many times in
@@ -84,7 +84,7 @@ impl MessageHandler {
             Ok(request) => self.state_tx.send(request).map_err(|_| ()),
             // An error here means that the `header` + `action` pair did not constitute a valid
             // incoming request, so we just report this back to the widget as an error.
-            Err(err) => self.widget.reply(err).await.map_err(|_| ()),
+            Err(err) => self.widget.reply(err).await,
         };
     }
 }
