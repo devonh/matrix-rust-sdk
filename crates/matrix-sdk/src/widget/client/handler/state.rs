@@ -6,7 +6,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tracing::{info, warn};
 
 use super::{
-    outgoing::{CapabilitiesRequest, CapabilitiesUpdate, OpenIdCredentialsUpdate},
+    outgoing::{CapabilitiesRequest, CapabilitiesUpdate, OpenIdCredentialsUpdate, SendEvent},
     Capabilities, Error, IncomingRequest as Request, IncomingResponse as Response, OpenIdResponse,
     OpenIdStatus, Result,
 };
@@ -123,11 +123,28 @@ impl<T: PermissionsProvider> State<T> {
     /// is typically performed at the beginning (either once a `ContentLoad` is
     /// received or once the widget is connected, depending on widget settings).
     async fn initialize(&mut self) -> Result<()> {
+        // Request the desired capabilities from a widget.
         let CapabilitiesResponse { capabilities: desired } =
             self.widget.send(CapabilitiesRequest::new(Empty {})).await?;
 
-        self.capabilities = Some(self.client.initialize(desired.clone()).await);
+        // Initialise the capabilities with the desired capabilities.
+        let mut capabilities = self.client.initialize(desired.clone()).await;
 
+        // Subscribe to the events if the widget was granted such capabilities.
+        // `take()` is fine here since we never rely upon this value again.
+        if let Some(mut listener) = capabilities.listener.take() {
+            let widget = self.widget.clone();
+            tokio::spawn(async move {
+                while let Some(event) = listener.recv().await {
+                    if let Err(err) = widget.send(SendEvent::new(event)).await {
+                        warn!("Failed to send an event to a widget: {err}");
+                    }
+                }
+            });
+        }
+
+        // Update the capabilities with the approved ones and send the response back.
+        self.capabilities = Some(capabilities);
         self.widget
             .send(CapabilitiesUpdate::new(CapabilitiesUpdatedRequest {
                 requested: desired,
