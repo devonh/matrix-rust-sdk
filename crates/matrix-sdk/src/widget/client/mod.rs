@@ -6,11 +6,12 @@ use std::{
     collections::HashMap,
     result::Result as StdResult,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use async_channel::Sender;
 use serde_json::{from_str as from_json, to_string as to_json};
-use tokio::sync::oneshot;
+use tokio::{sync::oneshot, time::timeout};
 use tracing::warn;
 use uuid::Uuid;
 
@@ -125,9 +126,23 @@ impl WidgetProxy {
         };
         self.sink.send(message).await.map_err(|_| Error::WidgetDisconnected)?;
 
+        // Insert a one-shot channel into the map of pending responses.
         let (tx, rx) = oneshot::channel();
-        self.pending.lock().expect("Pending mutex poisoned").insert(id, tx);
-        let reply = rx.await.map_err(|_| Error::WidgetDisconnected)?;
+        self.pending.lock().expect("Pending mutex poisoned").insert(id.clone(), tx);
+
+        // Wait for the response from the widget. If the widget does not reply within
+        // ten seconds (as per the spec), we return an error and don't wait for
+        // the reply.
+        let reply = timeout(Duration::from_secs(10), rx)
+            .await
+            .map_err(|_| {
+                self.pending.lock().expect("Pending mutex poisoned").remove(&id);
+                // Unfortunately we don't have a way to inform the widget that we're not waiting
+                // for the reply anymore.
+                Error::custom("Timeout reached while waiting for reply")
+            })?
+            .map_err(|_| Error::WidgetDisconnected)?;
+
         T::extract_response(reply)
             .ok_or(Error::custom("Widget sent invalid response"))?
             .map_err(Error::WidgetErrorReply)
