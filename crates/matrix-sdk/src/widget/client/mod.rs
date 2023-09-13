@@ -31,12 +31,11 @@ mod handler;
 mod matrix;
 
 /// Runs the client widget API handler for a given widget with a provided
-/// `client`. Returns once the widget is disconnected or some terminal error
-/// occurs.
+/// `client`. Returns once the widget is disconnected.
 pub(super) async fn run<T: PermissionsProvider>(
     client: MatrixDriver<T>,
     Widget { settings, comm }: Widget,
-) -> Result<()> {
+) {
     // A small proxy object to provide a higher level api to interract with a
     // widget.
     let widget = Arc::new(WidgetProxy::new(settings, comm.to));
@@ -58,8 +57,6 @@ pub(super) async fn run<T: PermissionsProvider>(
             Err(e) => widget.send_error(None, e.to_string()).await,
         }
     }
-
-    Ok(())
 }
 
 /// Handles interaction with a widget. Essentially, it's a proxy to the widget

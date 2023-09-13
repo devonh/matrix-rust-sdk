@@ -4,7 +4,7 @@
 
 use async_channel::{Receiver, Sender};
 
-use self::client::{run as client_widget_api, MatrixDriver, Result};
+use self::client::{run as client_widget_api, MatrixDriver};
 use crate::room::Room;
 
 mod client;
@@ -57,12 +57,12 @@ pub struct Comm {
 
 /// Runs client widget API for a given `widget` with a given
 /// `permission_manager` within a given `room`. The function returns once the
-/// API is completed (the widget disconnected etc).
+/// widget is disconnected.
 pub async fn run_client_widget_api(
     widget: Widget,
     permission_manager: impl PermissionsProvider,
     room: Room,
-) -> Result<()> {
+) {
     // TODO: define a cancellation mechanism (?).
-    client_widget_api(MatrixDriver::new(room, permission_manager), widget).await
+    client_widget_api(MatrixDriver::new(room, permission_manager), widget).await;
 }

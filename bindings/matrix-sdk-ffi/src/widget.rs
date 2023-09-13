@@ -163,13 +163,10 @@ pub async fn run_client_widget_api(
     permissions_provider: Box<dyn WidgetPermissionsProvider>,
 ) {
     let permissions_provider = PermissionsProviderWrap(permissions_provider.into());
-    if let Err(e) = matrix_sdk::widget::run_client_widget_api(
+    matrix_sdk::widget::run_client_widget_api(
         widget.into(),
         permissions_provider,
         room.inner.clone(),
     )
     .await
-    {
-        panic!("{e}");
-    }
 }
