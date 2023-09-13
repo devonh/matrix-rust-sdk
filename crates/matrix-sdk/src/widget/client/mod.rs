@@ -35,66 +35,32 @@ mod matrix;
 /// occurs.
 pub(super) async fn run<T: PermissionsProvider>(
     client: MatrixDriver<T>,
-    widget: Widget,
+    Widget { settings, comm }: Widget,
 ) -> Result<()> {
-    // A map of outgoing requests that we are waiting a response for, i.e. a
-    // requests that we sent to the widget and that we're expecting an answer
-    // from.
-    let state: PendingResponses = Arc::new(Mutex::new(HashMap::new()));
-
-    // Create a tiny helper to report errors to the widget that occur inside this
-    // function.
-    let reporter = ErrorReporter::new(widget.comm.to.clone(), widget.settings.id.clone());
+    // A small proxy object to provide a higher level api to interract with a
+    // widget.
+    let widget = Arc::new(WidgetProxy::new(settings, comm.to));
 
     // Create a message handler (handles incoming requests from the widget).
-    let handler = {
-        let widget = WidgetProxy::new(widget.settings, widget.comm.to.clone(), state.clone());
-        MessageHandler::new(client, widget)
-    };
+    let handler = MessageHandler::new(client, widget.clone());
 
-    // Receives plain JSON string messages from a widget, parses it and passes
-    // it to the handler.
-    while let Ok(raw) = widget.comm.from.recv().await {
+    // Read a plain JSON message from a widget and parse it.
+    while let Ok(raw) = comm.from.recv().await {
         match from_json::<Message>(&raw) {
+            // The message is valid, process it.
             Ok(msg) => match msg.action {
                 // This is an incoming request from a widget.
-                Action::FromWidget(action) => {
-                    handler.handle(msg.header, action).await;
-                }
-                // This is a response from the widget to a request from the
-                // client / driver (i.e. response to the outgoing request from
-                // our perspective).
-                Action::ToWidget(action) => {
-                    let pending = state
-                        .lock()
-                        .expect("Pending mutex poisoned")
-                        .remove(&msg.header.request_id);
-
-                    // If we found a pending response handle, then we send it to the response.
-                    // Otherwise, it means that the widget sent a response to the request we never
-                    // sent.
-                    if let Some(tx) = pending {
-                        // It's ok if send fails here, it just means that the
-                        // widget has disconnected.
-                        let _ = tx.send(action);
-                    } else {
-                        let id = msg.header.request_id;
-                        reporter.report(Some(id), "Unexpected response from a widget").await;
-                    }
-                }
+                Action::FromWidget(action) => handler.handle(msg.header, action).await,
+                // This is a response to our (outgoing) request.
+                Action::ToWidget(action) => widget.handle_widget_response(msg.header, action).await,
             },
-            Err(e) => {
-                reporter.report(None, e.to_string()).await;
-            }
+            // The message has an invalid format, report an error.
+            Err(e) => widget.send_error(None, e.to_string()).await,
         }
     }
 
     Ok(())
 }
-
-/// Map that stores pending responses for the outgoing requests (requests that
-/// **we** send to the widget).
-type PendingResponses = Arc<Mutex<HashMap<String, oneshot::Sender<ToWidgetAction>>>>;
 
 /// Handles interaction with a widget. Essentially, it's a proxy to the widget
 /// that adds some additional type-safety and a convenient "higher level" access
@@ -107,11 +73,12 @@ pub(crate) struct WidgetProxy {
     sink: Sender<String>,
     /// Map that stores pending responses for the **outgoing requests**
     /// (requests that **we** send to the widget).
-    pending: PendingResponses,
+    pending: Arc<Mutex<HashMap<String, oneshot::Sender<ToWidgetAction>>>>,
 }
 
 impl WidgetProxy {
-    fn new(info: WidgetInfo, sink: Sender<String>, pending: PendingResponses) -> Self {
+    fn new(info: WidgetInfo, sink: Sender<String>) -> Self {
+        let pending = Arc::new(Mutex::new(HashMap::new()));
         Self { info, sink, pending }
     }
 
@@ -157,6 +124,30 @@ impl WidgetProxy {
         self.sink.send(message).await.map_err(|_| ())
     }
 
+    /// Sends an out-of-band error to the widget. Only for internal use.
+    async fn send_error(&self, request_id: Option<String>, error: impl AsRef<str>) {
+        let error = ErrorMessage {
+            widget_id: self.info.id.clone(),
+            request_id,
+            response: ErrorBody::new(error),
+        };
+        let _ = self.sink.send(to_json(&error).expect("Bug: can't serialise a message")).await;
+    }
+
+    /// Handles a response from the widget to one of the outgoing requests that
+    /// we initiated.
+    async fn handle_widget_response(&self, header: Header, action: ToWidgetAction) {
+        let id = header.request_id;
+
+        // Check if we have a pending oneshot response channel.
+        if let Some(tx) = self.pending.lock().expect("Pending mutex poisoned").remove(&id) {
+            // It's ok if send fails here, it just means that the widget has disconnected.
+            let _ = tx.send(action);
+        } else {
+            self.send_error(Some(id), "Unexpected response from a widget").await;
+        }
+    }
+
     /// Tells whether or not we should negotiate supported capabilities on
     /// `ContentLoad` or not (if `false`, they are negotiated right away).
     fn init_on_load(&self) -> bool {
@@ -188,29 +179,5 @@ impl From<IncomingResponse> for ReplyToWidget {
 impl From<IncomingErrorResponse> for ReplyToWidget {
     fn from(msg: IncomingErrorResponse) -> Self {
         Self::Error(msg)
-    }
-}
-
-// Tiny helper structure for sending out-of-band errors.
-struct ErrorReporter {
-    /// Raw communication channel to send `String`s (JSON) to the widget.
-    sink: Sender<String>,
-    /// Widget ID.
-    widget_id: String,
-}
-
-impl ErrorReporter {
-    fn new(sink: Sender<String>, widget_id: String) -> Self {
-        Self { sink, widget_id }
-    }
-
-    /// Sends an out-of-band error to the widget. Only for internal use.
-    async fn report(&self, request_id: Option<String>, error: impl AsRef<str>) {
-        let error = ErrorMessage {
-            widget_id: self.widget_id.clone(),
-            request_id,
-            response: ErrorBody::new(error),
-        };
-        let _ = self.sink.send(to_json(&error).expect("Bug: can't serialise a message")).await;
     }
 }
