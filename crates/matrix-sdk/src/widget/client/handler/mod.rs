@@ -52,9 +52,10 @@ pub(crate) struct MessageHandler {
 impl MessageHandler {
     /// Creates an instance of a message handler with a given matrix driver
     /// (used to handle all matrix related stuff) and a given widget proxy.
-    pub(crate) fn new(client: MatrixDriver<impl PermissionsProvider>, widget: WidgetProxy) -> Self {
-        let widget = Arc::new(widget);
-
+    pub(crate) fn new(
+        client: MatrixDriver<impl PermissionsProvider>,
+        widget: Arc<WidgetProxy>,
+    ) -> Self {
         // Spawn a new task for the state machine. We'll use a channel to delegate
         // handling of messages and other tasks.
         let (state_tx, state_rx) = unbounded_channel();
