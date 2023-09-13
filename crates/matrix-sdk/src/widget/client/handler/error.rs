@@ -9,7 +9,7 @@ pub(crate) type Result<T, E = Error> = StdResult<T, E>;
 /// Errors that could be returned when processing incoming requests from a
 /// widget.
 #[derive(Debug, ThisError)]
-pub enum Error {
+pub(crate) enum Error {
     /// Widget has been disconnected (no further communication with a widget
     /// possible).
     #[error("The connection to the widget has been lost")]
@@ -30,12 +30,12 @@ pub enum Error {
 
 impl Error {
     /// Converts a given error into a [`Self::Other`].
-    pub fn other(err: impl StdError) -> Self {
+    pub(crate) fn other(err: impl StdError) -> Self {
         Self::Other(err.to_string().into())
     }
 
     /// Creates a new [`Self::Other`] error with a given message.
-    pub fn custom(message: impl Into<Cow<'static, str>>) -> Self {
+    pub(crate) fn custom(message: impl Into<Cow<'static, str>>) -> Self {
         Self::Other(message.into())
     }
 }
