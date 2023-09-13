@@ -1,11 +1,6 @@
 //! A high-level (safer) API to interract with a widget.
 
-use std::{
-    collections::HashMap,
-    result::Result as StdResult,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::{collections::HashMap, result::Result as StdResult, sync::Mutex, time::Duration};
 
 use async_channel::Sender;
 use serde_json::to_string as to_json;
@@ -31,12 +26,12 @@ pub(crate) struct WidgetProxy {
     sink: Sender<String>,
     /// Map that stores pending responses for the **outgoing requests**
     /// (requests that **we** send to the widget).
-    pending: Arc<Mutex<HashMap<String, oneshot::Sender<ToWidgetAction>>>>,
+    pending: Mutex<HashMap<String, oneshot::Sender<ToWidgetAction>>>,
 }
 
 impl WidgetProxy {
     pub(super) fn new(info: WidgetSettings, sink: Sender<String>) -> Self {
-        let pending = Arc::new(Mutex::new(HashMap::new()));
+        let pending = Mutex::new(HashMap::new());
         Self { info, sink, pending }
     }
 
