@@ -2,7 +2,7 @@
 //! complete. Capabilities must represent the functionatliy of the negotiated
 //! capabilities.
 
-use ruma::{events::AnySyncTimelineEvent, serde::Raw};
+use ruma::{events::AnyTimelineEvent, serde::Raw};
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::widget::{client::matrix::EventServerProxy, Permissions};
@@ -18,7 +18,7 @@ use crate::widget::{client::matrix::EventServerProxy, Permissions};
 pub struct Capabilities {
     /// Receiver of incoming matrix events. `None` if we don't have permissions
     /// to subscribe to the new events.
-    pub listener: Option<UnboundedReceiver<Raw<AnySyncTimelineEvent>>>,
+    pub listener: Option<UnboundedReceiver<Raw<AnyTimelineEvent>>>,
     /// Event reader (allows reading events). `None` if reading is forbidden.
     pub reader: Option<EventServerProxy>,
     /// Event sender (allows sending events). `None` if sending is forbidden.
