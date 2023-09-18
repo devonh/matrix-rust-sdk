@@ -3,11 +3,11 @@ use ruma::{
         account::request_openid_token::v3::Request as MatrixOpenIdRequest, filter::RoomEventFilter,
     },
     assign,
-    events::AnySyncTimelineEvent,
+    events::{AnySyncTimelineEvent, AnyTimelineEvent},
     serde::Raw,
 };
 use tokio::sync::{mpsc, oneshot};
-use tracing::warn;
+use tracing::{info, warn};
 
 use super::handler::{Capabilities, Error, OpenIdDecision, OpenIdStatus, Result};
 use crate::{
@@ -91,12 +91,24 @@ impl<T> Driver<T> {
     fn setup_matrix_event_handler(
         &mut self,
         filter: Filters,
-    ) -> mpsc::UnboundedReceiver<Raw<AnySyncTimelineEvent>> {
+    ) -> mpsc::UnboundedReceiver<Raw<AnyTimelineEvent>> {
         let (tx, rx) = mpsc::unbounded_channel();
+        let room_id = self.room.room_id().as_str().to_owned();
         let callback = move |raw_ev: Raw<AnySyncTimelineEvent>| {
             let (filter, tx) = (filter.clone(), tx.clone());
             if let Ok(ev) = raw_ev.deserialize_as::<MatrixEventFilterInput>() {
-                filter.any_matches(&ev).then(|| tx.send(raw_ev));
+                filter.any_matches(&ev).then(|| {
+                    info!("received event for room: {}", room_id.clone().as_str());
+                    // deserialize should be possible if Raw<AnySyncTimelineEvent> is possible
+                    let mut ev_value = raw_ev.deserialize_as::<serde_json::Value>().unwrap();
+                    let ev_obj = ev_value.as_object_mut().unwrap();
+                    ev_obj.insert("room_id".to_owned(), room_id.clone().into());
+                    let ev_with_room_id =
+                        serde_json::from_value::<Raw<AnyTimelineEvent>>(ev_value).unwrap();
+                    info!("final Event: {}", ev_with_room_id.json());
+
+                    tx.send(ev_with_room_id)
+                });
             }
             async {}
         };
@@ -122,8 +134,8 @@ impl EventServerProxy {
 
     pub(crate) async fn read(&self, req: ReadEventRequest) -> Result<ReadEventResponse> {
         let limit = req.limit.unwrap_or(match req.state_key {
-            Some(..) => 1, // Default state events limit.
-            None => 50,    // Default message-like events limit.
+            Some(..) => 50, // Default state events limit.
+            None => 50,     // Default message-like events limit.
         });
 
         let options = assign!(MessagesOptions::backward(), {

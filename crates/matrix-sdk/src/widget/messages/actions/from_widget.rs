@@ -1,5 +1,5 @@
 use ruma::{
-    events::{AnySyncTimelineEvent, TimelineEventType},
+    events::{AnyTimelineEvent, TimelineEventType},
     serde::Raw,
 };
 use serde::{Deserialize, Serialize};
@@ -89,5 +89,5 @@ pub(crate) struct ReadEventRequest {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ReadEventResponse {
-    pub events: Vec<Raw<AnySyncTimelineEvent>>,
+    pub events: Vec<Raw<AnyTimelineEvent>>,
 }

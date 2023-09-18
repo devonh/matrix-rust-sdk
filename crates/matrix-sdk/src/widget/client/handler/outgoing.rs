@@ -1,7 +1,5 @@
 //! Ougoing requests (client -> widget).
 
-use ruma::{events::AnySyncTimelineEvent, serde::Raw};
-
 use crate::widget::messages::{
     to_widget::{Action, CapabilitiesResponse, CapabilitiesUpdatedRequest},
     Empty, MessageKind as Kind, OpenIdResponse,
