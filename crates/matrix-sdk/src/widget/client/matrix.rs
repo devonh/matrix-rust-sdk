@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use ruma::{
     api::client::{
         account::request_openid_token::v3::Request as MatrixOpenIdRequest, filter::RoomEventFilter,
@@ -9,7 +10,7 @@ use ruma::{
 use tokio::sync::{mpsc, oneshot};
 use tracing::warn;
 
-use super::handler::{Capabilities, Error, OpenIdDecision, OpenIdStatus, Result};
+use super::handler::{Capabilities, Error, OpenIdDecision, OpenIdStatus, Result, Client};
 use crate::{
     event_handler::EventHandlerDropGuard,
     room::{MessagesOptions, Room},
@@ -42,10 +43,29 @@ impl<T> Driver<T> {
         Self { room, permissions_provider, event_handler_handle: None }
     }
 
-    pub(crate) async fn initialize(&mut self, permissions: Permissions) -> Capabilities
-    where
-        T: PermissionsProvider,
-    {
+    fn setup_matrix_event_handler(
+        &mut self,
+        filter: Filters,
+    ) -> mpsc::UnboundedReceiver<Raw<AnySyncTimelineEvent>> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let callback = move |raw_ev: Raw<AnySyncTimelineEvent>| {
+            let (filter, tx) = (filter.clone(), tx.clone());
+            if let Ok(ev) = raw_ev.deserialize_as::<MatrixEventFilterInput>() {
+                filter.any_matches(&ev).then(|| tx.send(raw_ev));
+            }
+            async {}
+        };
+
+        let handle = self.room.add_event_handler(callback);
+        let drop_guard = self.room.client().event_handler_drop_guard(handle);
+        self.event_handler_handle.replace(drop_guard);
+        rx
+    }
+}
+
+#[async_trait]
+impl<T: PermissionsProvider> Client for Driver<T> {
+    async fn initialize(&mut self, permissions: Permissions) -> Capabilities {
         let permissions = self.permissions_provider.acquire_permissions(permissions).await;
 
         Capabilities {
@@ -58,7 +78,7 @@ impl<T> Driver<T> {
         }
     }
 
-    pub(crate) fn get_openid(&self, request_id: String) -> OpenIdStatus {
+    fn get_openid(&self, request_id: String) -> OpenIdStatus {
         let user_id = self.room.own_user_id().to_owned();
         let client = self.room.client.clone();
         let (tx, rx) = oneshot::channel();
@@ -86,25 +106,6 @@ impl<T> Driver<T> {
         // multiple times, it may return/resolve the token right away.
         // Currently, we assume that we always request a new token. Fix it later.
         OpenIdStatus::Pending(rx)
-    }
-
-    fn setup_matrix_event_handler(
-        &mut self,
-        filter: Filters,
-    ) -> mpsc::UnboundedReceiver<Raw<AnySyncTimelineEvent>> {
-        let (tx, rx) = mpsc::unbounded_channel();
-        let callback = move |raw_ev: Raw<AnySyncTimelineEvent>| {
-            let (filter, tx) = (filter.clone(), tx.clone());
-            if let Ok(ev) = raw_ev.deserialize_as::<MatrixEventFilterInput>() {
-                filter.any_matches(&ev).then(|| tx.send(raw_ev));
-            }
-            async {}
-        };
-
-        let handle = self.room.add_event_handler(callback);
-        let drop_guard = self.room.client().event_handler_drop_guard(handle);
-        self.event_handler_handle.replace(drop_guard);
-        rx
     }
 }
 

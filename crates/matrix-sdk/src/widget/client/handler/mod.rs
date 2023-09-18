@@ -12,20 +12,19 @@ pub(crate) use self::{
     capabilities::Capabilities,
     error::{Error, Result},
     incoming::{
-        ErrorResponse as IncomingErrorResponse, Request as IncomingRequest,
+        ReplyToWidget,
+        Request as IncomingRequest,
         Response as IncomingResponse,
     },
     openid::{OpenIdDecision, OpenIdStatus},
     outgoing::Request as OutgoingRequest,
+    state::{Client, Widget},
 };
-use super::{MatrixDriver, WidgetProxy};
-use crate::widget::{
+use crate::widget::
     messages::{
         from_widget::{Action, SupportedApiVersionsResponse as SupportedApiVersions},
         Header, OpenIdResponse, OpenIdState,
-    },
-    PermissionsProvider,
-};
+    };
 
 mod capabilities;
 mod error;
@@ -38,7 +37,7 @@ mod state;
 /// proper responses. This is essentially a state machine for the client-side
 /// widget API.
 #[allow(missing_debug_implementations)]
-pub(crate) struct MessageHandler {
+pub(crate) struct MessageHandler<W> {
     /// The processing of the incoming requests is delegated to the worker
     /// (state machine runs in its own task or "thread" if you will), so that
     /// the `handle()` function does not block (originally it was non-async).
@@ -46,15 +45,15 @@ pub(crate) struct MessageHandler {
     state_tx: UnboundedSender<IncomingRequest>,
     /// A convenient proxy to the widget that allows us interacting with a
     /// widget via more convenient safely typed high level abstractions.
-    widget: Arc<WidgetProxy>,
+    widget: Arc<W>,
 }
 
-impl MessageHandler {
+impl<W: Widget> MessageHandler<W> {
     /// Creates an instance of a message handler with a given matrix driver
     /// (used to handle all matrix related stuff) and a given widget proxy.
     pub(crate) fn new(
-        client: MatrixDriver<impl PermissionsProvider>,
-        widget: Arc<WidgetProxy>,
+        client: impl Client,
+        widget: Arc<W>,
     ) -> Self {
         // Spawn a new task for the state machine. We'll use a channel to delegate
         // handling of messages and other tasks.

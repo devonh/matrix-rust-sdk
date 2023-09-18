@@ -3,6 +3,8 @@
 
 use std::ops::Deref;
 
+use serde_json::to_string as to_json;
+
 use crate::widget::messages::{
     from_widget::{self, Action, SupportedApiVersionsResponse},
     Action as ActionType, Empty, ErrorBody, ErrorMessage, Header, Message, MessageKind,
@@ -129,5 +131,32 @@ pub(crate) struct WithHeader<T> {
 impl<T> WithHeader<T> {
     fn new(header: Header, data: T) -> Self {
         Self { header, data }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) enum ReplyToWidget {
+    Reply(Response),
+    Error(ErrorResponse),
+}
+
+impl From<Response> for ReplyToWidget {
+    fn from(response: Response) -> Self {
+        Self::Reply(response)
+    }
+}
+
+impl From<ErrorResponse> for ReplyToWidget {
+    fn from(msg: ErrorResponse) -> Self {
+        Self::Error(msg)
+    }
+}
+
+impl ReplyToWidget {
+    pub(crate) fn into_json(self) -> Result<String, ()> {
+        match self {
+            Self::Reply(r) => to_json::<Message>(&(r.into())).map_err(|_| ()),
+            Self::Error(e) => to_json::<ErrorMessage>(&(e.into())).map_err(|_| ()),
+        }
     }
 }

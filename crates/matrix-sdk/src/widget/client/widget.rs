@@ -1,13 +1,14 @@
 //! A high-level (safer) API to interract with a widget.
 
-use std::{collections::HashMap, result::Result as StdResult, sync::Mutex, time::Duration};
+use std::{collections::HashMap, sync::Mutex, time::Duration};
 
+use async_trait::async_trait;
 use async_channel::Sender;
 use serde_json::to_string as to_json;
 use tokio::{sync::oneshot, time::timeout};
 use uuid::Uuid;
 
-use super::handler::{Error, IncomingErrorResponse, IncomingResponse, OutgoingRequest, Result};
+use super::handler::{Error, OutgoingRequest, Result, ReplyToWidget, Widget};
 use crate::widget::{
     messages::{
         to_widget::Action as ToWidgetAction, Action, ErrorBody, ErrorMessage, Header, Message,
@@ -35,9 +36,35 @@ impl WidgetProxy {
         Self { info, sink, pending }
     }
 
-    /// Sends a request to the widget, returns the response from the widget once
-    /// received.
-    pub(crate) async fn send<T: OutgoingRequest>(&self, msg: T) -> Result<T::Response> {
+    /// Sends an out-of-band error to the widget. Only for internal use.
+    pub(super) async fn send_error(&self, request_id: Option<String>, error: impl AsRef<str>) {
+        let error = ErrorMessage {
+            widget_id: self.info.id.clone(),
+            request_id,
+            response: ErrorBody::new(error),
+        };
+        let _ = self.sink.send(to_json(&error).expect("Bug: can't serialise a message")).await;
+    }
+
+    /// Handles a response from the widget to one of the outgoing requests that
+    /// we initiated.
+    pub(super) async fn handle_widget_response(&self, header: Header, action: ToWidgetAction) {
+        let id = header.request_id;
+
+        // Check if we have a pending oneshot response channel.
+        if let Some(tx) = self.pending.lock().expect("Pending mutex poisoned").remove(&id) {
+            // It's ok if send fails here, it just means that the widget has disconnected.
+            let _ = tx.send(action);
+        } else {
+            self.send_error(Some(id), "Unexpected response from a widget").await;
+        }
+    }
+}
+
+#[async_trait]
+impl Widget for WidgetProxy {
+    /// Sends a request to the widget, returns the response from the widget once received.
+    async fn send<T: OutgoingRequest>(&self, msg: T) -> Result<T::Response> {
         let id = Uuid::new_v4().to_string();
         let message = {
             let header = Header::new(&id, &self.info.id);
@@ -72,65 +99,14 @@ impl WidgetProxy {
     /// itself can only be constructed from a valid incoming request, so we
     /// ensure that only valid replies could be constructed. Error is returned
     /// if the reply cannot be sent due to the widget being disconnected.
-    pub(crate) async fn reply(&self, response: impl Into<ReplyToWidget>) -> StdResult<(), ()> {
+    async fn reply(&self, response: impl Into<ReplyToWidget> + Send) -> Result<(), ()> {
         let message = response.into().into_json().expect("Bug: can't serialise a message");
         self.sink.send(message).await.map_err(|_| ())
     }
 
-    /// Sends an out-of-band error to the widget. Only for internal use.
-    pub(super) async fn send_error(&self, request_id: Option<String>, error: impl AsRef<str>) {
-        let error = ErrorMessage {
-            widget_id: self.info.id.clone(),
-            request_id,
-            response: ErrorBody::new(error),
-        };
-        let _ = self.sink.send(to_json(&error).expect("Bug: can't serialise a message")).await;
-    }
-
-    /// Handles a response from the widget to one of the outgoing requests that
-    /// we initiated.
-    pub(super) async fn handle_widget_response(&self, header: Header, action: ToWidgetAction) {
-        let id = header.request_id;
-
-        // Check if we have a pending oneshot response channel.
-        if let Some(tx) = self.pending.lock().expect("Pending mutex poisoned").remove(&id) {
-            // It's ok if send fails here, it just means that the widget has disconnected.
-            let _ = tx.send(action);
-        } else {
-            self.send_error(Some(id), "Unexpected response from a widget").await;
-        }
-    }
-
     /// Tells whether or not we should negotiate supported capabilities on
     /// `ContentLoad` or not (if `false`, they are negotiated right away).
-    pub(crate) fn init_on_load(&self) -> bool {
+    fn init_on_load(&self) -> bool {
         self.info.init_on_load
-    }
-}
-
-#[derive(Debug)]
-pub(crate) enum ReplyToWidget {
-    Reply(IncomingResponse),
-    Error(IncomingErrorResponse),
-}
-
-impl From<IncomingResponse> for ReplyToWidget {
-    fn from(response: IncomingResponse) -> Self {
-        Self::Reply(response)
-    }
-}
-
-impl From<IncomingErrorResponse> for ReplyToWidget {
-    fn from(msg: IncomingErrorResponse) -> Self {
-        Self::Error(msg)
-    }
-}
-
-impl ReplyToWidget {
-    fn into_json(self) -> Result<String, ()> {
-        match self {
-            Self::Reply(r) => to_json::<Message>(&(r.into())).map_err(|_| ()),
-            Self::Error(e) => to_json::<ErrorMessage>(&(e.into())).map_err(|_| ()),
-        }
     }
 }

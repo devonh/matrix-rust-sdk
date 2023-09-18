@@ -2,35 +2,49 @@
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tracing::{info, warn};
 
 use super::{
-    outgoing::{CapabilitiesRequest, CapabilitiesUpdate, OpenIdCredentialsUpdate, SendEvent},
+    outgoing::{CapabilitiesRequest, CapabilitiesUpdate, OpenIdCredentialsUpdate, SendEvent, Request as OutgoingRequest},
+    incoming::ReplyToWidget,
     Capabilities, Error, IncomingRequest as Request, IncomingResponse as Response, OpenIdResponse,
     OpenIdStatus, Result,
 };
 use crate::widget::{
-    client::{MatrixDriver, WidgetProxy},
+    Permissions,
     messages::{
         from_widget::{ApiVersion, SupportedApiVersionsResponse},
         to_widget::{CapabilitiesResponse, CapabilitiesUpdatedRequest},
         Empty,
-    },
-    PermissionsProvider,
+    }
 };
 
 /// State of our client API state machine that handles incoming messages and
 /// advances the state.
-pub(super) struct State<T> {
+pub(super) struct State<W, C> {
     capabilities: Option<Capabilities>,
-    widget: Arc<WidgetProxy>,
-    client: MatrixDriver<T>,
+    widget: Arc<W>,
+    client: C,
 }
 
-impl<T: PermissionsProvider> State<T> {
+#[async_trait]
+pub(crate) trait Widget: Send + Sync + 'static {
+    async fn send<T: OutgoingRequest>(&self, req: T) -> Result<T::Response>;
+    async fn reply(&self, response: impl Into<ReplyToWidget> + Send) -> Result<(), ()>;
+    fn init_on_load(&self) -> bool;
+}
+
+#[async_trait]
+pub(crate) trait Client: Send + Sync + 'static {
+    async fn initialize(&mut self, permissions: Permissions) -> Capabilities;
+    fn get_openid(&self, request_id: String) -> OpenIdStatus;
+}
+
+impl<W: Widget, C: Client> State<W, C> {
     /// Creates a new [`Self`] with a given proxy and a matrix driver.
-    pub(super) fn new(widget: Arc<WidgetProxy>, client: MatrixDriver<T>) -> Self {
+    pub(super) fn new(widget: Arc<W>, client: C) -> Self {
         Self { capabilities: None, widget, client }
     }
 
