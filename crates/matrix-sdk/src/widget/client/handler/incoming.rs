@@ -3,6 +3,8 @@
 
 use std::ops::Deref;
 
+use serde::Serialize;
+
 use crate::widget::messages::{
     from_widget::{self, Action, SupportedApiVersionsResponse},
     Action as ActionType, Empty, ErrorBody, ErrorMessage, Header, Message, MessageKind,
@@ -107,9 +109,8 @@ impl From<Response> for Message {
 impl From<ErrorResponse> for ErrorMessage {
     fn from(response: ErrorResponse) -> Self {
         Self {
-            widget_id: response.header.widget_id,
-            request_id: Some(response.header.request_id),
-            response: response.data,
+            original_request: serde_json::to_value(response.clone()).ok(),
+            response: response.data.clone(),
         }
     }
 }
@@ -120,8 +121,9 @@ impl From<ErrorResponse> for ErrorMessage {
 /// fields are private by design so that the user can't modify any of the fields
 /// outside of this module by accident. It also ensures that we can only
 /// construct this data type from within this module.
-#[derive(Debug, Clone)]
+#[derive(Serialize, Debug, Clone)]
 pub(crate) struct WithHeader<T> {
+    #[serde(flatten)]
     header: Header,
     data: T,
 }

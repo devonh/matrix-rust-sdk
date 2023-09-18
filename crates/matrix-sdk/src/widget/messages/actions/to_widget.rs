@@ -16,7 +16,7 @@ pub enum Action {
     #[serde(rename = "openid_credentials")]
     OpenIdCredentialsUpdate(MessageKind<OpenIdResponse, Empty>),
     #[serde(rename = "send_event")]
-    SendEvent(MessageKind<Raw<AnySyncTimelineEvent>, Empty>),
+    SendEvent(MessageKind<serde_json::Value, Empty>),
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

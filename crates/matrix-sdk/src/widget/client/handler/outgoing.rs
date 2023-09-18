@@ -54,5 +54,5 @@ generate_requests! {
     CapabilitiesRequest(Empty) -> CapabilitiesResponse,
     CapabilitiesUpdate(CapabilitiesUpdatedRequest) -> Empty,
     OpenIdCredentialsUpdate(OpenIdResponse) -> Empty,
-    SendEvent(Raw<AnySyncTimelineEvent>) -> Empty,
+    SendEvent(serde_json::Value) -> Empty,
 }

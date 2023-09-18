@@ -136,7 +136,12 @@ impl<T: PermissionsProvider> State<T> {
             let widget = self.widget.clone();
             tokio::spawn(async move {
                 while let Some(event) = listener.recv().await {
-                    if let Err(err) = widget.send(SendEvent::new(event)).await {
+                    if let Err(err) = widget
+                        .send(SendEvent::new(
+                            serde_json::to_value(event).expect("Could not convert to value"),
+                        ))
+                        .await
+                    {
                         warn!("Failed to send an event to a widget: {err}");
                     }
                 }

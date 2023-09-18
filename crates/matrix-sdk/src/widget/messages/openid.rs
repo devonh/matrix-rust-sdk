@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct State {
     #[serde(rename = "original_request_id")]
@@ -16,8 +15,10 @@ pub struct State {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[serde(tag = "state")]
 pub enum Response {
     Allowed(State),
     Blocked,
+    #[serde(rename = "request")]
     Pending,
 }
