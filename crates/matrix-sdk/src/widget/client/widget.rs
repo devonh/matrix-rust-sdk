@@ -3,6 +3,7 @@
 use std::{collections::HashMap, result::Result as StdResult, sync::Mutex, time::Duration};
 
 use async_channel::Sender;
+use serde::Serialize;
 use serde_json::to_string as to_json;
 use tokio::{sync::oneshot, time::timeout};
 use uuid::Uuid;
@@ -28,7 +29,12 @@ pub(crate) struct WidgetProxy {
     /// (requests that **we** send to the widget).
     pending: Mutex<HashMap<String, oneshot::Sender<ToWidgetAction>>>,
 }
-
+#[derive(Debug, Serialize)]
+struct ResponseMessage {
+    #[serde(flatten)]
+    pub(crate) original_request: Option<serde_json::Value>,
+    pub(crate) response: serde_json::Value,
+}
 impl WidgetProxy {
     pub(super) fn new(info: WidgetSettings, sink: Sender<String>) -> Self {
         let pending = Mutex::new(HashMap::new());
@@ -78,10 +84,13 @@ impl WidgetProxy {
     }
 
     /// Sends an out-of-band error to the widget. Only for internal use.
-    pub(super) async fn send_error(&self, request_id: Option<String>, error: impl AsRef<str>) {
+    pub(super) async fn send_error(
+        &self,
+        original_request: Option<serde_json::Value>,
+        error: impl AsRef<str>,
+    ) {
         let error = ErrorMessage {
-            widget_id: self.info.id.clone(),
-            request_id,
+            original_request: original_request.clone(),
             response: ErrorBody::new(error),
         };
         let _ = self.sink.send(to_json(&error).expect("Bug: can't serialise a message")).await;
@@ -90,14 +99,19 @@ impl WidgetProxy {
     /// Handles a response from the widget to one of the outgoing requests that
     /// we initiated.
     pub(super) async fn handle_widget_response(&self, header: Header, action: ToWidgetAction) {
-        let id = header.request_id;
+        let id = header.clone().request_id;
 
         // Check if we have a pending oneshot response channel.
         if let Some(tx) = self.pending.lock().expect("Pending mutex poisoned").remove(&id) {
             // It's ok if send fails here, it just means that the widget has disconnected.
             let _ = tx.send(action);
         } else {
-            self.send_error(Some(id), "Unexpected response from a widget").await;
+            // TODO this does not compile with tauri. where we start tauri in a thread::spawn.
+            // self.send_error(
+            //     serde_json::value::to_value(header).ok(),
+            //     "Unexpected response from a widget",
+            // )
+            // .await;
         }
     }
 
@@ -105,6 +119,10 @@ impl WidgetProxy {
     /// `ContentLoad` or not (if `false`, they are negotiated right away).
     pub(crate) fn init_on_load(&self) -> bool {
         self.info.init_on_load
+    }
+
+    pub(crate) fn id(&self) -> &str {
+        &self.info.id
     }
 }
 

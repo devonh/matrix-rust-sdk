@@ -38,9 +38,8 @@ impl Header {
 }
 
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub(crate) struct ErrorMessage {
-    pub widget_id: String,
-    pub request_id: Option<String>,
+    #[serde(flatten)]
+    pub original_request: Option<serde_json::Value>,
     pub response: ErrorBody,
 }
