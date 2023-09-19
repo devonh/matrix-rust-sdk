@@ -1,4 +1,3 @@
-use ruma::{events::AnyTimelineEvent, serde::Raw};
 use serde::{Deserialize, Serialize};
 
 use crate::widget::{
