@@ -27,8 +27,10 @@ impl<T> Request<T> {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Response<Req, Resp> {
-    #[serde(flatten)]
-    pub request: Request<Req>,
+    /// Responses contain the original request under the data field, just like
+    /// the request itself.
+    #[serde(rename = "data")]
+    pub request: Req,
     pub response: ResponseBody<Resp>,
 }
 
@@ -76,7 +78,7 @@ pub struct Empty {}
 impl<T> Request<T> {
     pub fn map<R>(self, response: Result<R, String>) -> Kind<T, R> {
         Kind::Response(Response {
-            request: self,
+            request: self.content,
             response: match response {
                 Ok(response) => ResponseBody::Success(response),
                 Err(error) => ResponseBody::Failure(ErrorBody::new(error)),
