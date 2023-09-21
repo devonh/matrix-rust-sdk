@@ -57,7 +57,7 @@ use ruma::{
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::{Mutex, RwLock};
-use tracing::{info, warn};
+use tracing::{debug, field::display, info, warn, Span};
 use vodozemac::{base64_encode, megolm::SessionOrdering, Curve25519PublicKey};
 use zeroize::Zeroize;
 
@@ -72,7 +72,7 @@ use crate::{
     },
     types::{events::room_key_withheld::RoomKeyWithheldEvent, EventEncryptionAlgorithm},
     verification::VerificationMachine,
-    CrossSigningStatus, ReadOnlyOwnUserIdentity,
+    CrossSigningStatus, LocalTrust, ReadOnlyOwnUserIdentity,
 };
 
 pub mod caches;
@@ -106,10 +106,106 @@ pub struct Store {
     inner: Arc<StoreInner>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct StoreCache {
     tracked_users: DashSet<OwnedUserId>,
     tracked_user_loading_lock: RwLock<bool>,
+
+    account: ReadOnlyAccount,
+}
+
+impl StoreCache {
+    fn new(account: ReadOnlyAccount) -> Self {
+        Self {
+            account,
+            tracked_user_loading_lock: Default::default(),
+            tracked_users: Default::default(),
+        }
+    }
+
+    /// TODO the method to call when loading a StoreCache from the first time.
+    async fn load(
+        user_id: &UserId,
+        device_id: &DeviceId,
+        store: Arc<DynCryptoStore>,
+    ) -> Result<Self> {
+        let account = match store.load_account().await? {
+            Some(account) => {
+                if user_id != account.user_id() || device_id != account.device_id() {
+                    return Err(CryptoStoreError::MismatchedAccount {
+                        expected: (account.user_id().to_owned(), account.device_id().to_owned()),
+                        got: (user_id.to_owned(), device_id.to_owned()),
+                    });
+                }
+
+                Span::current()
+                    .record("ed25519_key", display(account.identity_keys().ed25519))
+                    .record("curve25519_key", display(account.identity_keys().curve25519));
+                debug!("Restored an Olm account");
+
+                account
+            }
+
+            None => {
+                let account = ReadOnlyAccount::with_device_id(user_id, device_id);
+
+                Span::current()
+                    .record("ed25519_key", display(account.identity_keys().ed25519))
+                    .record("curve25519_key", display(account.identity_keys().curve25519));
+
+                let device = ReadOnlyDevice::from_account(&account).await;
+
+                // We just created this device from our own Olm `Account`. Since we are the
+                // owners of the private keys of this device we can safely mark
+                // the device as verified.
+                device.set_trust_state(LocalTrust::Verified);
+
+                let changes = Changes {
+                    account: Some(account.clone()),
+                    devices: DeviceChanges { new: vec![device], ..Default::default() },
+                    ..Default::default()
+                };
+                store.save_changes(changes).await?;
+
+                debug!("Created a new Olm account");
+
+                account
+            }
+        };
+
+        Ok(Self {
+            account,
+            tracked_user_loading_lock: Default::default(),
+            tracked_users: Default::default(),
+        })
+    }
+
+    /// TODO the method that would be called when we notice another process has touched the crypto
+    /// store in the background.
+    async fn reload(&mut self, store: Arc<DynCryptoStore>) -> Result<()> {
+        self.account = match store.load_account().await? {
+            Some(account) => {
+                if account.user_id() != self.account.user_id()
+                    || account.device_id() != self.account.device_id()
+                {
+                    return Err(CryptoStoreError::MismatchedAccount {
+                        expected: (
+                            self.account.user_id().to_owned(),
+                            self.account.device_id().to_owned(),
+                        ),
+                        got: (account.user_id.to_owned(), account.device_id.to_owned()),
+                    });
+                }
+                account
+            }
+
+            None => {
+                // We should have saved a previous account on the first call to `Self::load()`.
+                return Err(CryptoStoreError::AccountUnset);
+            }
+        };
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -494,6 +590,7 @@ impl Store {
         identity: Arc<Mutex<PrivateCrossSigningIdentity>>,
         store: Arc<CryptoStoreWrapper>,
         verification_machine: VerificationMachine,
+        account: ReadOnlyAccount,
     ) -> Self {
         let inner = Arc::new(StoreInner {
             user_id,
@@ -502,7 +599,7 @@ impl Store {
             verification_machine,
             users_for_key_query: AsyncStdMutex::new(UsersForKeyQuery::new()),
             users_for_key_query_condvar: Condvar::new(),
-            cache: Default::default(),
+            cache: StoreCache::new(account),
         });
 
         Self { inner }
