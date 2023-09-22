@@ -11,25 +11,23 @@ use self::state::State;
 pub(crate) use self::{
     capabilities::Capabilities,
     error::{Error, Result},
-    incoming::{
-        ErrorResponse as IncomingErrorResponse, Request as IncomingRequest,
-        Response as IncomingResponse,
-    },
     openid::{OpenIdDecision, OpenIdStatus},
     outgoing::Request as OutgoingRequest,
 };
 use super::{MatrixDriver, WidgetProxy};
 use crate::widget::{
     messages::{
-        from_widget::{SupportedApiVersionsResponse as SupportedApiVersions, SupportedRequest},
-        Header, OpenIdResponse, OpenIdState,
+        from_widget::{
+            SupportedApiVersionsResponse as SupportedApiVersions, SupportedRequest,
+            SupportedResponse,
+        },
+        OpenIdResponse, OpenIdState, WithHeader,
     },
     PermissionsProvider,
 };
 
 mod capabilities;
 mod error;
-mod incoming;
 mod openid;
 mod outgoing;
 mod state;
@@ -43,7 +41,7 @@ pub(crate) struct MessageHandler {
     /// (state machine runs in its own task or "thread" if you will), so that
     /// the `handle()` function does not block (originally it was non-async).
     /// This channel allows us sending incoming messages to that worker.
-    state_tx: UnboundedSender<IncomingRequest>,
+    state_tx: UnboundedSender<WithHeader<SupportedRequest>>,
     /// A convenient proxy to the widget that allows us interacting with a
     /// widget via more convenient safely typed high level abstractions.
     widget: Arc<WidgetProxy>,
@@ -65,27 +63,25 @@ impl MessageHandler {
     }
 
     /// Handles incoming messages from a widget.
-    pub(crate) async fn handle(&self, header: Header, req: SupportedRequest) {
+    pub(crate) async fn handle(&self, msg: WithHeader<SupportedRequest>) {
         // Validate the message. Note, that we ignore the error, because the only error
         // that can be returned here is `Err(())`, which means that the widget is
         // disconnected, which does not need to be handled in any way at the moment.
-        let _ = match IncomingRequest::new(header, req) {
+        let _ = match msg.data.clone() {
             // Normally, we send all incoming requests to the worker task (`State::listen`), but the
             // `SupportedApiVersions` request is a special case - not only the widget can send it
             // at any time, but it also may block the processing of other messages until we reply
             // to this one. Luckily, this request is the only single one that does not depend on
             // any state, so we can handle the message right away.
-            Ok(IncomingRequest::GetSupportedApiVersion(req)) => {
-                self.widget.reply(req.map(Ok(SupportedApiVersions::new()))).await
+            SupportedRequest::GetSupportedApiVersion(req) => {
+                let resp = req.map(Ok(SupportedApiVersions::new()));
+                self.widget.reply(msg.map(SupportedResponse::GetSupportedApiVersion(resp))).await
             }
             // Otherwise, send the incoming request to a worker task. This way our
             // `self.handle()` should actually never block. So the caller can call it many times in
             // a row and it's the `State` (that runs in its own task) that will decide which of
             // them to process sequentially and which in parallel.
-            Ok(request) => self.state_tx.send(request).map_err(|_| ()),
-            // An error here means that the `header` + `action` pair did not constitute a valid
-            // incoming request, so we just report this back to the widget as an error.
-            Err(err) => self.widget.reply(err).await,
+            _ => self.state_tx.send(msg).map_err(|_| ()),
         };
     }
 }

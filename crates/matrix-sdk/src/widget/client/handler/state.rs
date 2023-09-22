@@ -7,15 +7,16 @@ use tracing::{info, warn};
 
 use super::{
     outgoing::{CapabilitiesRequest, CapabilitiesUpdate, OpenIdCredentialsUpdate, SendEvent},
-    Capabilities, Error, IncomingRequest as Request, IncomingResponse as Response, OpenIdResponse,
-    OpenIdStatus, Result,
+    Capabilities, Error, OpenIdResponse, OpenIdStatus, Result,
 };
 use crate::widget::{
     client::{MatrixDriver, WidgetProxy},
     messages::{
-        from_widget::{ApiVersion, SupportedApiVersionsResponse},
+        from_widget::{
+            ApiVersion, SupportedApiVersionsResponse, SupportedRequest, SupportedResponse,
+        },
         to_widget::{CapabilitiesResponse, CapabilitiesUpdatedRequest},
-        Empty,
+        Empty, WithHeader,
     },
     PermissionsProvider,
 };
@@ -36,7 +37,7 @@ impl<T: PermissionsProvider> State<T> {
 
     /// Start a task that will listen to the `rx` for new incoming requests from
     /// a widget and process them.
-    pub(super) async fn listen(mut self, mut rx: UnboundedReceiver<Request>) {
+    pub(super) async fn listen(mut self, mut rx: UnboundedReceiver<WithHeader<SupportedRequest>>) {
         // Typically, widget's capabilities are initialized on a special `ContentLoad`
         // message. However, if this flag is set, we must initialize them right away.
         if !self.widget.init_on_load() {
@@ -60,13 +61,14 @@ impl<T: PermissionsProvider> State<T> {
     }
 
     /// Handles a given incoming request from a widget.
-    async fn handle(&mut self, request: Request) -> Result<()> {
-        match request {
-            Request::GetSupportedApiVersion(req) => {
-                self.reply(req.map(Ok(SupportedApiVersionsResponse::new()))).await?;
+    async fn handle(&mut self, msg: WithHeader<SupportedRequest>) -> Result<()> {
+        match msg.data.clone() {
+            SupportedRequest::GetSupportedApiVersion(req) => {
+                let resp = req.map(Ok(SupportedApiVersionsResponse::new()));
+                self.reply(msg.map(SupportedResponse::GetSupportedApiVersion(resp))).await?;
             }
 
-            Request::ContentLoaded(req) => {
+            SupportedRequest::ContentLoaded(req) => {
                 let (response, negotiate) =
                     match (self.widget.init_on_load(), self.capabilities.as_ref()) {
                         (true, None) => (Ok(Empty {}), true),
@@ -74,45 +76,49 @@ impl<T: PermissionsProvider> State<T> {
                         _ => (Ok(Empty {}), false),
                     };
 
-                self.reply(req.map(response)).await?;
+                let resp = req.map(response);
+                self.reply(msg.map(SupportedResponse::ContentLoaded(resp))).await?;
+
                 if negotiate {
                     self.initialize().await?;
                 }
             }
 
-            Request::GetOpenId(req) => {
-                let (reply, handle) = match self.client.get_openid(req.id().to_owned()) {
+            SupportedRequest::GetOpenId(req) => {
+                let (reply, handle) = match self.client.get_openid(msg.header.request_id.clone()) {
                     OpenIdStatus::Resolved(decision) => (decision.into(), None),
                     OpenIdStatus::Pending(handle) => (OpenIdResponse::Pending, Some(handle)),
                 };
 
-                self.reply(req.map(Ok(reply))).await?;
+                let resp = req.map(Ok(reply));
+                self.reply(msg.map(SupportedResponse::GetOpenId(resp))).await?;
+
                 if let Some(handle) = handle {
                     let status = handle.await.map_err(|_| Error::WidgetDisconnected)?;
                     self.widget.send(OpenIdCredentialsUpdate::new(status.into())).await?;
                 }
             }
 
-            Request::ReadEvent(req) => {
+            SupportedRequest::ReadEvent(req) => {
                 let fut = self
                     .caps()?
                     .reader
                     .as_ref()
                     .ok_or(Error::custom("No permissions to read events"))?
-                    .read((*req).clone());
-                let response = req.map(Ok(fut.await?));
-                self.reply(response).await?;
+                    .read(req.content.clone());
+                let resp = req.map(Ok(fut.await?));
+                self.reply(msg.map(SupportedResponse::ReadEvent(resp))).await?;
             }
 
-            Request::SendEvent(req) => {
+            SupportedRequest::SendEvent(req) => {
                 let fut = self
                     .caps()?
                     .sender
                     .as_ref()
                     .ok_or(Error::custom("No permissions to send events"))?
-                    .send((*req).clone());
-                let response = req.map(Ok(fut.await?));
-                self.reply(response).await?;
+                    .send(req.content.clone());
+                let resp = req.map(Ok(fut.await?));
+                self.reply(msg.map(SupportedResponse::SendEvent(resp))).await?;
             }
         }
 
@@ -160,7 +166,7 @@ impl<T: PermissionsProvider> State<T> {
         Ok(())
     }
 
-    async fn reply(&self, response: Response) -> Result<()> {
+    async fn reply(&self, response: WithHeader<SupportedResponse>) -> Result<()> {
         self.widget.reply(response).await.map_err(|_| Error::WidgetDisconnected)
     }
 
@@ -179,6 +185,28 @@ impl SupportedApiVersionsResponse {
                 ApiVersion::MSC2871,
                 ApiVersion::MSC3819,
             ],
+        }
+    }
+}
+
+impl WithHeader<SupportedRequest> {
+    fn fail(self, error: impl Into<String>) -> WithHeader<SupportedResponse> {
+        match self.data.clone() {
+            SupportedRequest::ContentLoaded(req) => {
+                self.map(SupportedResponse::ContentLoaded(req.map(Err(error.into()))))
+            }
+            SupportedRequest::GetOpenId(req) => {
+                self.map(SupportedResponse::GetOpenId(req.map(Err(error.into()))))
+            }
+            SupportedRequest::GetSupportedApiVersion(req) => {
+                self.map(SupportedResponse::GetSupportedApiVersion(req.map(Err(error.into()))))
+            }
+            SupportedRequest::ReadEvent(req) => {
+                self.map(SupportedResponse::ReadEvent(req.map(Err(error.into()))))
+            }
+            SupportedRequest::SendEvent(req) => {
+                self.map(SupportedResponse::SendEvent(req.map(Err(error.into()))))
+            }
         }
     }
 }

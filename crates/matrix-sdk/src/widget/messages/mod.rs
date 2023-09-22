@@ -49,6 +49,11 @@ impl<T> WithHeader<T> {
     pub(crate) fn new(header: Header, data: T) -> Self {
         Self { header, data }
     }
+
+    pub(crate) fn map<U>(self, data: U) -> WithHeader<U> {
+        let Self { header, .. } = self;
+        WithHeader { header, data }
+    }
 }
 
 #[derive(Debug, Serialize)]

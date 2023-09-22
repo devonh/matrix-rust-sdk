@@ -10,7 +10,7 @@ use tracing::warn;
 pub(crate) use self::matrix::Driver as MatrixDriver;
 use self::{handler::MessageHandler, widget::WidgetProxy};
 use super::{
-    messages::{IncomingMessage, IncomingMessageBody},
+    messages::{IncomingMessage, IncomingMessageBody, WithHeader},
     PermissionsProvider, Widget,
 };
 
@@ -36,10 +36,12 @@ pub(super) async fn run<T: PermissionsProvider>(
             // The message is valid, process it.
             Ok(msg) => match msg.body {
                 // This is an incoming request from a widget.
-                IncomingMessageBody::FromWidget(action) => handler.handle(msg.header, action).await,
+                IncomingMessageBody::FromWidget(action) => {
+                    handler.handle(WithHeader::new(msg.header, action)).await;
+                }
                 // This is a response to our (outgoing) request.
                 IncomingMessageBody::ToWidget(action) => {
-                    widget.handle_widget_response(msg.header, action).await
+                    widget.handle_widget_response(WithHeader::new(msg.header, action)).await
                 }
             },
             // The message has an invalid format, report an error.

@@ -8,9 +8,11 @@ use serde_json::to_string as to_json;
 use tokio::{sync::oneshot, time::timeout};
 use uuid::Uuid;
 
-use super::handler::{Error, IncomingErrorResponse, IncomingResponse, OutgoingRequest, Result};
+use super::handler::{Error, OutgoingRequest, Result};
 use crate::widget::{
-    messages::{to_widget, ErrorBody, ErrorMessage, Header, WithHeader},
+    messages::{
+        from_widget::SupportedResponse, to_widget, ErrorBody, ErrorMessage, Header, WithHeader,
+    },
     WidgetSettings,
 };
 
@@ -77,8 +79,8 @@ impl WidgetProxy {
     /// itself can only be constructed from a valid incoming request, so we
     /// ensure that only valid replies could be constructed. Error is returned
     /// if the reply cannot be sent due to the widget being disconnected.
-    pub(crate) async fn reply(&self, response: impl Into<ReplyToWidget>) -> StdResult<(), ()> {
-        let message = response.into().into_json().expect("Bug: can't serialize a message");
+    pub(crate) async fn reply(&self, response: WithHeader<SupportedResponse>) -> StdResult<(), ()> {
+        let message = to_json(&response).expect("Bug: can't serialize a message");
         self.sink.send(message).await.map_err(|_| ())
     }
 
@@ -99,15 +101,14 @@ impl WidgetProxy {
     /// we initiated.
     pub(super) async fn handle_widget_response(
         &self,
-        header: Header,
-        res: to_widget::SupportedResponse,
+        message: WithHeader<to_widget::SupportedResponse>,
     ) {
-        let id = header.clone().request_id;
+        let id = message.header.request_id;
 
         // Check if we have a pending oneshot response channel.
         if let Some(tx) = self.pending.lock().expect("Pending mutex poisoned").remove(&id) {
             // It's ok if send fails here, it just means that the widget has disconnected.
-            let _ = tx.send(res);
+            let _ = tx.send(message.data);
         } else {
             // TODO this does not compile with tauri. where we start tauri in a
             // thread::spawn.
@@ -127,32 +128,5 @@ impl WidgetProxy {
 
     pub(crate) fn id(&self) -> &str {
         &self.info.id
-    }
-}
-
-#[derive(Debug)]
-pub(crate) enum ReplyToWidget {
-    Reply(IncomingResponse),
-    Error(IncomingErrorResponse),
-}
-
-impl From<IncomingResponse> for ReplyToWidget {
-    fn from(response: IncomingResponse) -> Self {
-        Self::Reply(response)
-    }
-}
-
-impl From<IncomingErrorResponse> for ReplyToWidget {
-    fn from(msg: IncomingErrorResponse) -> Self {
-        Self::Error(msg)
-    }
-}
-
-impl ReplyToWidget {
-    fn into_json(self) -> Result<String, ()> {
-        match self {
-            Self::Reply(r) => to_json(&r).map_err(|_| ()),
-            Self::Error(e) => to_json::<ErrorMessage>(&(e.into())).map_err(|_| ()),
-        }
     }
 }
