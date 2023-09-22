@@ -23,6 +23,16 @@ impl<T> Request<T> {
     pub fn new(content: T) -> Self {
         Self { content }
     }
+
+    pub fn map<R>(self, response: Result<R, String>) -> Kind<T, R> {
+        Kind::Response(Response {
+            request: self.content,
+            response: match response {
+                Ok(response) => ResponseBody::Success(response),
+                Err(error) => ResponseBody::Failure(ErrorBody::new(error)),
+            },
+        })
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -74,15 +84,3 @@ pub struct ErrorMessage {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Empty {}
-
-impl<T> Request<T> {
-    pub fn map<R>(self, response: Result<R, String>) -> Kind<T, R> {
-        Kind::Response(Response {
-            request: self.content,
-            response: match response {
-                Ok(response) => ResponseBody::Success(response),
-                Err(error) => ResponseBody::Failure(ErrorBody::new(error)),
-            },
-        })
-    }
-}
