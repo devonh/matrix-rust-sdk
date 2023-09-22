@@ -4,11 +4,14 @@ use ruma::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::widget::messages::{Empty, OpenIdResponse, Request, Response};
+use super::{
+    message::{Empty, Request, Response},
+    OpenIdResponse,
+};
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "action")]
-pub(crate) enum SupportedRequest {
+pub(crate) enum RequestType {
     #[serde(rename = "supported_api_versions")]
     GetSupportedApiVersion(Request<Empty>),
     #[serde(rename = "content_loaded")]
@@ -23,7 +26,7 @@ pub(crate) enum SupportedRequest {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "action")]
-pub(crate) enum SupportedResponse {
+pub(crate) enum ResponseType {
     #[serde(rename = "supported_api_versions")]
     GetSupportedApiVersion(Response<Empty, SupportedApiVersionsResponse>),
     #[serde(rename = "content_loaded")]

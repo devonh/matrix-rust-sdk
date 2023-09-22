@@ -1,13 +1,16 @@
 use serde::{Deserialize, Serialize};
 
 use crate::widget::{
-    messages::{Empty, OpenIdResponse, Request, Response},
+    messages::{
+        message::{Empty, Request, Response},
+        OpenIdResponse,
+    },
     Permissions as Capabilities,
 };
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "action")]
-pub enum SupportedRequest {
+pub enum RequestType {
     #[serde(rename = "capabilities")]
     CapabilitiesRequest(Request<Empty>),
     #[serde(rename = "notify_capabilities")]
@@ -20,7 +23,7 @@ pub enum SupportedRequest {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "action")]
-pub enum SupportedResponse {
+pub enum ResponseType {
     #[serde(rename = "capabilities")]
     CapabilitiesRequest(Response<Empty, CapabilitiesResponse>),
     #[serde(rename = "notify_capabilities")]

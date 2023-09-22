@@ -182,7 +182,16 @@ impl EventServerProxy {
     }
 
     pub(crate) async fn send(&self, req: SendEventRequest) -> Result<SendEventResponse> {
-        let de_helper = MatrixEventFilterInput::from_send_event_request(req.clone());
+        let de_helper = {
+            let SendEventRequest { event_type, state_key, content } = req.clone();
+            MatrixEventFilterInput {
+                event_type,
+                state_key,
+                // If content fails to deserialize (msgtype is not a string),
+                // pretend that there is no msgtype as far as filters are concerned
+                content: serde_json::from_value(content).unwrap_or_default(),
+            }
+        };
 
         // Run the request through the filter.
         if !self.filters.any_matches(&de_helper) {

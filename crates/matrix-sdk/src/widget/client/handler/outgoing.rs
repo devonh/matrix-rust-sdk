@@ -1,23 +1,17 @@
 //! Outgoing requests (client -> widget).
 
 use crate::widget::messages::{
-    to_widget::{
-        CapabilitiesResponse, CapabilitiesUpdatedRequest, SupportedRequest, SupportedResponse,
-    },
-    Empty, OpenIdResponse, Request as GenericRequest,
+    to_widget::{CapabilitiesResponse, CapabilitiesUpdatedRequest, RequestType, ResponseType},
+    Empty, OpenIdResponse, Request as RequestContent,
 };
 
 pub(crate) type Response<T> = Result<T, String>;
 
-// TODO: This trait could be improved and restricted even more by making sure
-// that `into_action()` only allows types that e.g. implement `T: AsRequest` and
-// `extract_response` only accept `T: AsResponse`. Though for this both such
-// traits must be introduced and implemented.
 pub(crate) trait Request: Sized + Send + Sync + 'static {
     type Response;
 
-    fn into_request(self) -> SupportedRequest;
-    fn extract_response(reply: SupportedResponse) -> Option<Response<Self::Response>>;
+    fn into_request_type(self) -> RequestType;
+    fn from_response_type(response: ResponseType) -> Option<Response<Self::Response>>;
 }
 
 macro_rules! generate_requests {
@@ -35,13 +29,13 @@ macro_rules! generate_requests {
             impl Request for $request {
                 type Response = $response_data;
 
-                fn into_request(self) -> SupportedRequest {
-                    SupportedRequest::$request(GenericRequest::new(self.0))
+                fn into_request_type(self) -> RequestType {
+                    RequestType::$request(RequestContent::new(self.0))
                 }
 
-                fn extract_response(reply: SupportedResponse) -> Option<Response<Self::Response>> {
-                    match reply {
-                        SupportedResponse::$request(r) => Some(r.response()),
+                fn from_response_type(response: ResponseType) -> Option<Response<Self::Response>> {
+                    match response {
+                        ResponseType::$request(r) => Some(r.response()),
                         _ => None,
                     }
                 }

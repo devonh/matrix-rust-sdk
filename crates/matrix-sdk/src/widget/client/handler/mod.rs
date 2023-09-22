@@ -18,8 +18,7 @@ use super::{MatrixDriver, WidgetProxy};
 use crate::widget::{
     messages::{
         from_widget::{
-            SupportedApiVersionsResponse as SupportedApiVersions, SupportedRequest,
-            SupportedResponse,
+            RequestType, ResponseType, SupportedApiVersionsResponse as SupportedApiVersions,
         },
         OpenIdResponse, OpenIdState, WithHeader,
     },
@@ -41,7 +40,7 @@ pub(crate) struct MessageHandler {
     /// (state machine runs in its own task or "thread" if you will), so that
     /// the `handle()` function does not block (originally it was non-async).
     /// This channel allows us sending incoming messages to that worker.
-    state_tx: UnboundedSender<WithHeader<SupportedRequest>>,
+    state_tx: UnboundedSender<WithHeader<RequestType>>,
     /// A convenient proxy to the widget that allows us interacting with a
     /// widget via more convenient safely typed high level abstractions.
     widget: Arc<WidgetProxy>,
@@ -63,7 +62,7 @@ impl MessageHandler {
     }
 
     /// Handles incoming messages from a widget.
-    pub(crate) async fn handle(&self, msg: WithHeader<SupportedRequest>) {
+    pub(crate) async fn handle(&self, msg: WithHeader<RequestType>) {
         // Validate the message. Note, that we ignore the error, because the only error
         // that can be returned here is `Err(())`, which means that the widget is
         // disconnected, which does not need to be handled in any way at the moment.
@@ -73,9 +72,9 @@ impl MessageHandler {
             // at any time, but it also may block the processing of other messages until we reply
             // to this one. Luckily, this request is the only single one that does not depend on
             // any state, so we can handle the message right away.
-            SupportedRequest::GetSupportedApiVersion(req) => {
+            RequestType::GetSupportedApiVersion(req) => {
                 let resp = req.map(Ok(SupportedApiVersions::new()));
-                self.widget.reply(msg.map(SupportedResponse::GetSupportedApiVersion(resp))).await
+                self.widget.reply(msg.map(ResponseType::GetSupportedApiVersion(resp))).await
             }
             // Otherwise, send the incoming request to a worker task. This way our
             // `self.handle()` should actually never block. So the caller can call it many times in

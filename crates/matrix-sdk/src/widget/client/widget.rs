@@ -10,9 +10,7 @@ use uuid::Uuid;
 
 use super::handler::{Error, OutgoingRequest, Result};
 use crate::widget::{
-    messages::{
-        from_widget::SupportedResponse, to_widget, ErrorBody, ErrorMessage, Header, WithHeader,
-    },
+    messages::{from_widget::ResponseType, to_widget, Header, OutgoingMessage, WithHeader},
     WidgetSettings,
 };
 
@@ -27,7 +25,7 @@ pub(crate) struct WidgetProxy {
     sink: Sender<String>,
     /// Map that stores pending responses for the **outgoing requests**
     /// (requests that **we** send to the widget).
-    pending: Mutex<HashMap<String, oneshot::Sender<to_widget::SupportedResponse>>>,
+    pending: Mutex<HashMap<String, oneshot::Sender<to_widget::ResponseType>>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -47,9 +45,11 @@ impl WidgetProxy {
     pub(crate) async fn send<T: OutgoingRequest>(&self, msg: T) -> Result<T::Response> {
         let id = Uuid::new_v4().to_string();
         let message = {
-            let header = Header::new(&id, &self.info.id);
-            let action = msg.into_request();
-            to_json(&WithHeader::new(header, action)).expect("Bug: can't serialise a message")
+            let msg = OutgoingMessage {
+                header: Header::new(&id, &self.info.id),
+                data: msg.into_request_type(),
+            };
+            to_json(&msg).expect("Bug: can't serialise a message")
         };
         self.sink.send(message).await.map_err(|_| Error::WidgetDisconnected)?;
 
@@ -70,7 +70,7 @@ impl WidgetProxy {
             })?
             .map_err(|_| Error::WidgetDisconnected)?;
 
-        T::extract_response(reply)
+        T::from_response_type(reply)
             .ok_or(Error::custom("Widget sent invalid response"))?
             .map_err(Error::WidgetErrorReply)
     }
@@ -79,29 +79,26 @@ impl WidgetProxy {
     /// itself can only be constructed from a valid incoming request, so we
     /// ensure that only valid replies could be constructed. Error is returned
     /// if the reply cannot be sent due to the widget being disconnected.
-    pub(crate) async fn reply(&self, response: WithHeader<SupportedResponse>) -> StdResult<(), ()> {
-        let message = to_json(&response).expect("Bug: can't serialize a message");
-        self.sink.send(message).await.map_err(|_| ())
+    pub(crate) async fn reply(&self, response: WithHeader<ResponseType>) -> StdResult<(), ()> {
+        let msg: OutgoingMessage<_> = response.into();
+        let json = to_json(&msg).expect("Bug: can't serialize a message");
+        self.sink.send(json).await.map_err(|_| ())
     }
 
     /// Sends an out-of-band error to the widget. Only for internal use.
-    pub(super) async fn send_error(
-        &self,
-        original_request: Option<serde_json::Value>,
-        error: impl AsRef<str>,
-    ) {
-        let error = ErrorMessage {
-            original_request: original_request.clone(),
-            response: ErrorBody::new(error),
-        };
-        let _ = self.sink.send(to_json(&error).expect("Bug: can't serialise a message")).await;
+    pub(super) async fn send_error(&self, error: impl AsRef<str>) {
+        // TODO: Create a structure for the out-of-band errors (refer to the
+        // discussion with @toger5 about the tricky error handling in the widget
+        // api spec).
+        let msg = to_json(error.as_ref()).expect("Bug: can't serialise a message");
+        let _ = self.sink.send(msg).await;
     }
 
     /// Handles a response from the widget to one of the outgoing requests that
     /// we initiated.
     pub(super) async fn handle_widget_response(
         &self,
-        message: WithHeader<to_widget::SupportedResponse>,
+        message: WithHeader<to_widget::ResponseType>,
     ) {
         let id = message.header.request_id;
 
@@ -110,13 +107,7 @@ impl WidgetProxy {
             // It's ok if send fails here, it just means that the widget has disconnected.
             let _ = tx.send(message.data);
         } else {
-            // TODO this does not compile with tauri. where we start tauri in a
-            // thread::spawn.
-            // self.send_error(
-            //     serde_json::value::to_value(header).ok(),
-            //     "Unexpected response from a widget",
-            // )
-            // .await;
+            self.send_error("Unexpected response from a widget").await;
         }
     }
 
@@ -124,9 +115,5 @@ impl WidgetProxy {
     /// `ContentLoad` or not (if `false`, they are negotiated right away).
     pub(crate) fn init_on_load(&self) -> bool {
         self.info.init_on_load
-    }
-
-    pub(crate) fn id(&self) -> &str {
-        &self.info.id
     }
 }

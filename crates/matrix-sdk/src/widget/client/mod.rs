@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use serde_json::{from_str as from_json, json};
+use serde_json::from_str as from_json;
 use tracing::warn;
 
 pub(crate) use self::matrix::Driver as MatrixDriver;
@@ -34,7 +34,7 @@ pub(super) async fn run<T: PermissionsProvider>(
     while let Ok(raw) = comm.from.recv().await {
         match from_json::<IncomingMessage>(&raw) {
             // The message is valid, process it.
-            Ok(msg) => match msg.body {
+            Ok(msg) => match msg.data {
                 // This is an incoming request from a widget.
                 IncomingMessageBody::FromWidget(action) => {
                     handler.handle(WithHeader::new(msg.header, action)).await;
@@ -46,31 +46,9 @@ pub(super) async fn run<T: PermissionsProvider>(
             },
             // The message has an invalid format, report an error.
             Err(e) => {
-                if let Ok(message) = from_json::<serde_json::Value>(&raw) {
-                    match message["response"] {
-                        serde_json::Value::Null => {
-                            widget.send_error(Some(message), e.to_string()).await;
-                        }
-                        serde_json::Value::Number(_)
-                        | serde_json::Value::String(_)
-                        | serde_json::Value::Object(_) => {
-                            warn!("ERROR parsing response");
-                            // This cannot be send to the widget as a response, because it already
-                            // contains a response field
-                            widget
-                                .send_error(Some(json!({"widget_id": widget.id()})), e.to_string())
-                                .await;
-                        }
-                        _ => {}
-                    }
-                } else {
-                    widget
-                        .send_error(
-                            None,
-                            "The request json could not be parsed as json. Its malformatted.",
-                        )
-                        .await;
-                }
+                // TODO: The actual logic for the error handling for unknown message is a bit
+                // more complicated. Implement it later based on a discussions with @toger5.
+                widget.send_error(e.to_string()).await;
             }
         }
     }

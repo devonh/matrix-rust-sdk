@@ -1,13 +1,6 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(untagged)]
-pub enum Kind<Req, Resp> {
-    Response(Response<Req, Resp>),
-    Request(Request<Req>),
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Request<T> {
     #[serde(rename = "data")]
     pub content: T,
@@ -56,12 +49,12 @@ pub enum ResponseBody<T> {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ErrorBody {
-    pub error: ErrorMessage,
+    pub error: ErrorContent,
 }
 
 impl ErrorBody {
     pub fn new(message: impl AsRef<str>) -> Self {
-        Self { error: ErrorMessage { message: message.as_ref().to_owned() } }
+        Self { error: ErrorContent { message: message.as_ref().to_owned() } }
     }
 }
 
@@ -72,7 +65,7 @@ impl AsRef<str> for ErrorBody {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ErrorMessage {
+pub struct ErrorContent {
     pub message: String,
 }
 
