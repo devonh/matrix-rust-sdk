@@ -10,7 +10,7 @@ use tracing::warn;
 pub(crate) use self::matrix::Driver as MatrixDriver;
 use self::{handler::MessageHandler, widget::WidgetProxy};
 use super::{
-    messages::{Action, Message},
+    messages::{IncomingMessage, IncomingMessageBody},
     PermissionsProvider, Widget,
 };
 
@@ -32,13 +32,15 @@ pub(super) async fn run<T: PermissionsProvider>(
 
     // Receive a plain JSON message from a widget and parse it.
     while let Ok(raw) = comm.from.recv().await {
-        match from_json::<Message>(&raw) {
+        match from_json::<IncomingMessage>(&raw) {
             // The message is valid, process it.
-            Ok(msg) => match msg.action {
+            Ok(msg) => match msg.body {
                 // This is an incoming request from a widget.
-                Action::FromWidget(action) => handler.handle(msg.header, action).await,
+                IncomingMessageBody::FromWidget(action) => handler.handle(msg.header, action).await,
                 // This is a response to our (outgoing) request.
-                Action::ToWidget(action) => widget.handle_widget_response(msg.header, action).await,
+                IncomingMessageBody::ToWidget(action) => {
+                    widget.handle_widget_response(msg.header, action).await
+                }
             },
             // The message has an invalid format, report an error.
             Err(e) => {
@@ -51,7 +53,8 @@ pub(super) async fn run<T: PermissionsProvider>(
                         | serde_json::Value::String(_)
                         | serde_json::Value::Object(_) => {
                             warn!("ERROR parsing response");
-                            //This cannot be send to the widget as a response, because it already contains a response field
+                            // This cannot be send to the widget as a response, because it already
+                            // contains a response field
                             widget
                                 .send_error(Some(json!({"widget_id": widget.id()})), e.to_string())
                                 .await;

@@ -3,12 +3,9 @@
 
 use std::ops::Deref;
 
-use serde::Serialize;
-
 use crate::widget::messages::{
-    from_widget::{self, Action, SupportedApiVersionsResponse},
-    Action as ActionType, Empty, ErrorBody, ErrorMessage, Header, Message, MessageKind,
-    OpenIdResponse, Request as RequestBody,
+    from_widget::{self, SupportedApiVersionsResponse, SupportedRequest},
+    Empty, ErrorBody, ErrorMessage, Header, OpenIdResponse, Request as RequestBody, WithHeader,
 };
 
 // Generates a bunch of request types and their responses. In particular:
@@ -27,23 +24,20 @@ macro_rules! generate_requests {
         }
 
         impl Request {
-            pub(crate) fn new(header: Header, action: Action) -> Result<Self, ErrorResponse> {
-                match action {
+            pub(crate) fn new(header: Header, req: SupportedRequest) -> Result<Self, ErrorResponse> {
+                match req {
                     $(
-                        from_widget::Action::$request(MessageKind::Request(r)) => {
+                        SupportedRequest::$request(r) => {
                             Ok(Self::$request($request(WithHeader::new(header, r))))
                         }
                     )*
-                    _ => {
-                        Err(ErrorResponse {
-                            header,
-                            data: ErrorBody::new("Invalid request from a widget"),
-                        })
-                    }
                 }
             }
 
-            pub(crate) fn fail(self, error: impl Into<String>) -> Response {
+            pub(crate) fn fail(
+                self,
+                error: impl Into<String>,
+            ) -> WithHeader<from_widget::SupportedResponse> {
                 match self {
                     $(
                         Self::$request(r) => r.map(Err(error.into())),
@@ -57,9 +51,12 @@ macro_rules! generate_requests {
             pub(crate) struct $request(WithHeader<RequestBody<$request_data>>);
 
             impl $request {
-                pub(crate) fn map(self, response_data: Result<$response_data, String>) -> Response {
-                    Response {
-                        data: from_widget::Action::$request(self.0.data.map(response_data)),
+                pub(crate) fn map(
+                    self,
+                    response_data: Result<$response_data, String>,
+                ) -> WithHeader<from_widget::SupportedResponse> {
+                    WithHeader {
+                        data: from_widget::SupportedResponse::$request(self.0.data.map(response_data)),
                         header: self.0.header,
                     }
                 }
@@ -92,44 +89,18 @@ generate_requests! {
 }
 
 /// Represents a response that could be sent back to a widget.
-pub(crate) type Response = WithHeader<Action>;
+pub(crate) type Response = WithHeader<from_widget::SupportedResponse>;
 
 /// Represents an error message that we send to the widget in case of an invalid
 /// message.
 pub(crate) type ErrorResponse = WithHeader<ErrorBody>;
 
-/// We can construct a `Message` once we get a valid `Response`.
-impl From<Response> for Message {
-    fn from(response: Response) -> Self {
-        Self { header: response.header, action: ActionType::FromWidget(response.data) }
-    }
-}
-
 // Or an `ErrorMessage` if we get an invalid response.
 impl From<ErrorResponse> for ErrorMessage {
     fn from(response: ErrorResponse) -> Self {
         Self {
-            original_request: serde_json::to_value(response.clone()).ok(),
+            original_request: serde_json::to_value(&response).ok(),
             response: response.data.clone(),
         }
-    }
-}
-
-/// `data` and a `header` that is associated with it. This ensures that we never
-/// handle a request without a header that is associated with it. Likewise, we
-/// ensure that the responses come with the request's original header. The
-/// fields are private by design so that the user can't modify any of the fields
-/// outside of this module by accident. It also ensures that we can only
-/// construct this data type from within this module.
-#[derive(Serialize, Debug, Clone)]
-pub(crate) struct WithHeader<T> {
-    #[serde(flatten)]
-    header: Header,
-    data: T,
-}
-
-impl<T> WithHeader<T> {
-    fn new(header: Header, data: T) -> Self {
-        Self { header, data }
     }
 }

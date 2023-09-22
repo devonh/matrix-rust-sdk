@@ -21,7 +21,7 @@ pub(crate) use self::{
 use super::{MatrixDriver, WidgetProxy};
 use crate::widget::{
     messages::{
-        from_widget::{Action, SupportedApiVersionsResponse as SupportedApiVersions},
+        from_widget::{SupportedApiVersionsResponse as SupportedApiVersions, SupportedRequest},
         Header, OpenIdResponse, OpenIdState,
     },
     PermissionsProvider,
@@ -65,11 +65,11 @@ impl MessageHandler {
     }
 
     /// Handles incoming messages from a widget.
-    pub(crate) async fn handle(&self, header: Header, action: Action) {
+    pub(crate) async fn handle(&self, header: Header, req: SupportedRequest) {
         // Validate the message. Note, that we ignore the error, because the only error
         // that can be returned here is `Err(())`, which means that the widget is
         // disconnected, which does not need to be handled in any way at the moment.
-        let _ = match IncomingRequest::new(header, action) {
+        let _ = match IncomingRequest::new(header, req) {
             // Normally, we send all incoming requests to the worker task (`State::listen`), but the
             // `SupportedApiVersions` request is a special case - not only the widget can send it
             // at any time, but it also may block the processing of other messages until we reply

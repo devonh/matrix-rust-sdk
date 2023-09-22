@@ -7,12 +7,6 @@ pub enum Kind<Req, Resp> {
     Request(Request<Req>),
 }
 
-impl<Req, Resp> Kind<Req, Resp> {
-    pub fn request(content: Req) -> Self {
-        Kind::Request(Request::new(content))
-    }
-}
-
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Request<T> {
     #[serde(rename = "data")]
@@ -24,14 +18,14 @@ impl<T> Request<T> {
         Self { content }
     }
 
-    pub fn map<R>(self, response: Result<R, String>) -> Kind<T, R> {
-        Kind::Response(Response {
+    pub fn map<R>(self, response: Result<R, String>) -> Response<T, R> {
+        Response {
             request: self.content,
             response: match response {
                 Ok(response) => ResponseBody::Success(response),
                 Err(error) => ResponseBody::Failure(ErrorBody::new(error)),
             },
-        })
+        }
     }
 }
 

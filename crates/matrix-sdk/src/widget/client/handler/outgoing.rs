@@ -1,8 +1,10 @@
-//! Ougoing requests (client -> widget).
+//! Outgoing requests (client -> widget).
 
 use crate::widget::messages::{
-    to_widget::{Action, CapabilitiesResponse, CapabilitiesUpdatedRequest},
-    Empty, MessageKind as Kind, OpenIdResponse,
+    to_widget::{
+        CapabilitiesResponse, CapabilitiesUpdatedRequest, SupportedRequest, SupportedResponse,
+    },
+    Empty, OpenIdResponse, Request as GenericRequest,
 };
 
 pub(crate) type Response<T> = Result<T, String>;
@@ -14,8 +16,8 @@ pub(crate) type Response<T> = Result<T, String>;
 pub(crate) trait Request: Sized + Send + Sync + 'static {
     type Response;
 
-    fn into_action(self) -> Action;
-    fn extract_response(reply: Action) -> Option<Response<Self::Response>>;
+    fn into_request(self) -> SupportedRequest;
+    fn extract_response(reply: SupportedResponse) -> Option<Response<Self::Response>>;
 }
 
 macro_rules! generate_requests {
@@ -33,13 +35,13 @@ macro_rules! generate_requests {
             impl Request for $request {
                 type Response = $response_data;
 
-                fn into_action(self) -> Action {
-                    Action::$request(Kind::request(self.0))
+                fn into_request(self) -> SupportedRequest {
+                    SupportedRequest::$request(GenericRequest::new(self.0))
                 }
 
-                fn extract_response(reply: Action) -> Option<Response<Self::Response>> {
+                fn extract_response(reply: SupportedResponse) -> Option<Response<Self::Response>> {
                     match reply {
-                        Action::$request(Kind::Response(r)) => Some(r.response()),
+                        SupportedResponse::$request(r) => Some(r.response()),
                         _ => None,
                     }
                 }

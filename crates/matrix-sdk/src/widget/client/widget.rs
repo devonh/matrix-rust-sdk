@@ -10,9 +10,7 @@ use uuid::Uuid;
 
 use super::handler::{Error, IncomingErrorResponse, IncomingResponse, OutgoingRequest, Result};
 use crate::widget::{
-    messages::{
-        to_widget::Action as ToWidgetAction, Action, ErrorBody, ErrorMessage, Header, Message,
-    },
+    messages::{to_widget, ErrorBody, ErrorMessage, Header, WithHeader},
     WidgetSettings,
 };
 
@@ -27,8 +25,9 @@ pub(crate) struct WidgetProxy {
     sink: Sender<String>,
     /// Map that stores pending responses for the **outgoing requests**
     /// (requests that **we** send to the widget).
-    pending: Mutex<HashMap<String, oneshot::Sender<ToWidgetAction>>>,
+    pending: Mutex<HashMap<String, oneshot::Sender<to_widget::SupportedResponse>>>,
 }
+
 #[derive(Debug, Serialize)]
 struct ResponseMessage {
     #[serde(flatten)]
@@ -47,8 +46,8 @@ impl WidgetProxy {
         let id = Uuid::new_v4().to_string();
         let message = {
             let header = Header::new(&id, &self.info.id);
-            let action = Action::ToWidget(msg.into_action());
-            to_json(&Message::new(header, action)).expect("Bug: can't serialise a message")
+            let action = msg.into_request();
+            to_json(&WithHeader::new(header, action)).expect("Bug: can't serialise a message")
         };
         self.sink.send(message).await.map_err(|_| Error::WidgetDisconnected)?;
 
@@ -79,7 +78,7 @@ impl WidgetProxy {
     /// ensure that only valid replies could be constructed. Error is returned
     /// if the reply cannot be sent due to the widget being disconnected.
     pub(crate) async fn reply(&self, response: impl Into<ReplyToWidget>) -> StdResult<(), ()> {
-        let message = response.into().into_json().expect("Bug: can't serialise a message");
+        let message = response.into().into_json().expect("Bug: can't serialize a message");
         self.sink.send(message).await.map_err(|_| ())
     }
 
@@ -98,15 +97,20 @@ impl WidgetProxy {
 
     /// Handles a response from the widget to one of the outgoing requests that
     /// we initiated.
-    pub(super) async fn handle_widget_response(&self, header: Header, action: ToWidgetAction) {
+    pub(super) async fn handle_widget_response(
+        &self,
+        header: Header,
+        res: to_widget::SupportedResponse,
+    ) {
         let id = header.clone().request_id;
 
         // Check if we have a pending oneshot response channel.
         if let Some(tx) = self.pending.lock().expect("Pending mutex poisoned").remove(&id) {
             // It's ok if send fails here, it just means that the widget has disconnected.
-            let _ = tx.send(action);
+            let _ = tx.send(res);
         } else {
-            // TODO this does not compile with tauri. where we start tauri in a thread::spawn.
+            // TODO this does not compile with tauri. where we start tauri in a
+            // thread::spawn.
             // self.send_error(
             //     serde_json::value::to_value(header).ok(),
             //     "Unexpected response from a widget",
@@ -147,7 +151,7 @@ impl From<IncomingErrorResponse> for ReplyToWidget {
 impl ReplyToWidget {
     fn into_json(self) -> Result<String, ()> {
         match self {
-            Self::Reply(r) => to_json::<Message>(&(r.into())).map_err(|_| ()),
+            Self::Reply(r) => to_json(&r).map_err(|_| ()),
             Self::Error(e) => to_json::<ErrorMessage>(&(e.into())).map_err(|_| ()),
         }
     }

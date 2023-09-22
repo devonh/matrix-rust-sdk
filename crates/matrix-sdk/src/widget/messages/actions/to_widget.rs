@@ -1,21 +1,34 @@
 use serde::{Deserialize, Serialize};
 
 use crate::widget::{
-    messages::{Empty, MessageKind, OpenIdResponse},
+    messages::{Empty, OpenIdResponse, Request, Response},
     Permissions as Capabilities,
 };
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(tag = "action")]
-pub enum Action {
+pub enum SupportedRequest {
     #[serde(rename = "capabilities")]
-    CapabilitiesRequest(MessageKind<Empty, CapabilitiesResponse>),
+    CapabilitiesRequest(Request<Empty>),
     #[serde(rename = "notify_capabilities")]
-    CapabilitiesUpdate(MessageKind<CapabilitiesUpdatedRequest, Empty>),
+    CapabilitiesUpdate(Request<CapabilitiesUpdatedRequest>),
     #[serde(rename = "openid_credentials")]
-    OpenIdCredentialsUpdate(MessageKind<OpenIdResponse, Empty>),
+    OpenIdCredentialsUpdate(Request<OpenIdResponse>),
     #[serde(rename = "send_event")]
-    SendEvent(MessageKind<serde_json::Value, Empty>),
+    SendEvent(Request<serde_json::Value>),
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "action")]
+pub enum SupportedResponse {
+    #[serde(rename = "capabilities")]
+    CapabilitiesRequest(Response<Empty, CapabilitiesResponse>),
+    #[serde(rename = "notify_capabilities")]
+    CapabilitiesUpdate(Response<CapabilitiesUpdatedRequest, Empty>),
+    #[serde(rename = "openid_credentials")]
+    OpenIdCredentialsUpdate(Response<OpenIdResponse, Empty>),
+    #[serde(rename = "send_event")]
+    SendEvent(Response<serde_json::Value, Empty>),
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

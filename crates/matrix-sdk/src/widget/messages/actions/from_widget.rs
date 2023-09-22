@@ -4,21 +4,36 @@ use ruma::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::widget::messages::{Empty, MessageKind, OpenIdResponse};
+use crate::widget::messages::{Empty, OpenIdResponse, Request, Response};
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "action")]
-pub(crate) enum Action {
+pub(crate) enum SupportedRequest {
     #[serde(rename = "supported_api_versions")]
-    GetSupportedApiVersion(MessageKind<Empty, SupportedApiVersionsResponse>),
+    GetSupportedApiVersion(Request<Empty>),
     #[serde(rename = "content_loaded")]
-    ContentLoaded(MessageKind<Empty, Empty>),
+    ContentLoaded(Request<Empty>),
     #[serde(rename = "get_openid")]
-    GetOpenId(MessageKind<Empty, OpenIdResponse>),
+    GetOpenId(Request<Empty>),
     #[serde(rename = "send_event")]
-    SendEvent(MessageKind<SendEventRequest, SendEventResponse>),
+    SendEvent(Request<SendEventRequest>),
     #[serde(rename = "org.matrix.msc2876.read_events")]
-    ReadEvent(MessageKind<ReadEventRequest, ReadEventResponse>),
+    ReadEvent(Request<ReadEventRequest>),
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "action")]
+pub(crate) enum SupportedResponse {
+    #[serde(rename = "supported_api_versions")]
+    GetSupportedApiVersion(Response<Empty, SupportedApiVersionsResponse>),
+    #[serde(rename = "content_loaded")]
+    ContentLoaded(Response<Empty, Empty>),
+    #[serde(rename = "get_openid")]
+    GetOpenId(Response<Empty, OpenIdResponse>),
+    #[serde(rename = "send_event")]
+    SendEvent(Response<SendEventRequest, SendEventResponse>),
+    #[serde(rename = "org.matrix.msc2876.read_events")]
+    ReadEvent(Response<ReadEventRequest, ReadEventResponse>),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
