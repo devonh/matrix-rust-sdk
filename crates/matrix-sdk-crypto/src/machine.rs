@@ -55,9 +55,8 @@ use vodozemac::{
     Curve25519PublicKey, Ed25519Signature,
 };
 
-#[cfg(feature = "backups_v1")]
-use crate::backups::BackupMachine;
 use crate::{
+    backups::BackupMachine,
     dehydrated_devices::{DehydratedDevices, DehydrationError},
     error::{EventError, MegolmError, MegolmResult, OlmError, OlmResult},
     gossiping::GossipMachine,
@@ -130,7 +129,6 @@ pub struct OlmMachineInner {
     /// of when a key query needs to be done and handling one.
     identity_manager: IdentityManager,
     /// A state machine that handles creating room key backups.
-    #[cfg(feature = "backups_v1")]
     backup_machine: BackupMachine,
 }
 
@@ -222,7 +220,6 @@ impl OlmMachine {
             store.clone(),
         );
 
-        #[cfg(feature = "backups_v1")]
         let backup_machine = BackupMachine::new(account.clone(), store.clone(), None);
 
         let inner = Arc::new(OlmMachineInner {
@@ -236,7 +233,6 @@ impl OlmMachine {
             verification_machine,
             key_request_machine,
             identity_manager,
-            #[cfg(feature = "backups_v1")]
             backup_machine,
         });
 
@@ -477,7 +473,6 @@ impl OlmMachine {
                 self.inner.verification_machine.mark_request_as_sent(request_id);
             }
             IncomingResponse::KeysBackup(_) => {
-                #[cfg(feature = "backups_v1")]
                 self.inner.backup_machine.mark_request_as_sent(request_id).await?;
             }
         };
@@ -1746,7 +1741,6 @@ impl OlmMachine {
                     // Only import the session if we didn't have this session or
                     // if it's a better version of the same session.
                     if new_session_better(&session, old_session).await {
-                        #[cfg(feature = "backups_v1")]
                         if from_backup {
                             session.mark_as_backed_up();
                         }
@@ -1910,7 +1904,6 @@ impl OlmMachine {
     ///
     /// This state machine can be used to incrementally backup all room keys to
     /// the server.
-    #[cfg(feature = "backups_v1")]
     pub fn backup_machine(&self) -> &BackupMachine {
         &self.inner.backup_machine
     }

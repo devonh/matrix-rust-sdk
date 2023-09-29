@@ -1068,12 +1068,12 @@ mod tests {
         identities::{LocalTrust, ReadOnlyDevice},
         olm::{PrivateCrossSigningIdentity, ReadOnlyAccount},
         session_manager::GroupSessionCache,
-        store::{CryptoStoreWrapper, MemoryStore, Store},
-        types::events::room::encrypted::{EncryptedEvent, RoomEncryptedEventContent},
+        store::{Changes, CryptoStoreWrapper, MemoryStore, Store},
+        types::events::room::encrypted::{
+            EncryptedEvent, EncryptedToDeviceEvent, RoomEncryptedEventContent,
+        },
         verification::VerificationMachine,
     };
-    #[cfg(any(feature = "automatic-room-key-forwarding", feature = "backups_v1"))]
-    use crate::{store::Changes, types::events::room::encrypted::EncryptedToDeviceEvent};
 
     fn alice_id() -> &'static UserId {
         user_id!("@alice:example.org")
@@ -1227,7 +1227,6 @@ mod tests {
         (alice_machine, alice_account, group_session, bob_machine)
     }
 
-    #[cfg(any(feature = "automatic-room-key-forwarding", feature = "backups_v1"))]
     fn extract_content<'a>(
         recipient: &UserId,
         request: &'a crate::OutgoingRequest,
@@ -1260,7 +1259,6 @@ mod tests {
         }
     }
 
-    #[cfg(any(feature = "automatic-room-key-forwarding", feature = "backups_v1"))]
     fn request_to_event<C>(
         recipient: &UserId,
         sender: &UserId,
@@ -1756,7 +1754,6 @@ mod tests {
     }
 
     #[async_test]
-    #[cfg(feature = "backups_v1")]
     async fn secret_broadcasting() {
         use futures_util::{pin_mut, FutureExt};
         use ruma::api::client::to_device::send_event_to_device::v3::Response as ToDeviceResponse;
