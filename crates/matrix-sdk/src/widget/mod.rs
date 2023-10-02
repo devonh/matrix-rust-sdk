@@ -114,7 +114,8 @@ impl WidgetDriver {
         room: Room,
         permissions_provider: impl PermissionsProvider,
     ) -> Result<(), ()> {
-        let (mut client_api, mut actions) = ClientApi::new();
+        let (mut client_api, mut actions) =
+            ClientApi::new(self.settings.init_on_load, room.room_id().to_owned());
 
         // Create a channel so that we can conveniently send all events to it.
         let (events_tx, mut events_rx) = unbounded_channel();
