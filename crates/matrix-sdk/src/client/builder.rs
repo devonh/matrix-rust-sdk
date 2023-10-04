@@ -22,7 +22,7 @@ use ruma::{
 };
 use thiserror::Error;
 use tokio::sync::{broadcast, Mutex, OnceCell};
-use tracing::{debug, field::debug, instrument, Span};
+use tracing::{debug, field::debug, info, instrument, warn, Span};
 use url::Url;
 
 use super::{Client, ClientInner};
@@ -334,6 +334,7 @@ impl ClientBuilder {
     #[instrument(skip_all, target = "matrix_sdk::client", fields(homeserver))]
     pub async fn build(self) -> Result<Client, ClientBuildError> {
         debug!("Starting to build the Client");
+        info!("Building Client & establising connection");
 
         let homeserver_cfg = self.homeserver_cfg.ok_or(ClientBuildError::MissingHomeserver)?;
         Span::current().record("homeserver", debug(&homeserver_cfg));
@@ -343,6 +344,11 @@ impl ClientBuilder {
             #[cfg(not(target_arch = "wasm32"))]
             HttpConfig::Settings(mut settings) => {
                 settings.timeout = self.request_config.timeout;
+
+                // HACK: (devon) needed to allow local, self-signed certificates
+                warn!("Disabling SSL verification!");
+                settings.disable_ssl_verification = true;
+
                 settings.make_client()?
             }
             HttpConfig::Custom(c) => c,

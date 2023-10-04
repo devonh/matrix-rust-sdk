@@ -50,7 +50,7 @@ use ruma::{
             membership::{join_room_by_id, join_room_by_id_or_alias},
             profile::get_profile,
             push::{get_notifications::v3::Notification, set_pusher, Pusher},
-            room::create_room,
+            room::{create_room, send_pdus},
             session::login::v3::DiscoveryInfo,
             sync::sync_events,
             uiaa,
@@ -1086,11 +1086,19 @@ impl Client {
     /// # };
     /// ```
     pub async fn create_room(&self, request: create_room::v3::Request) -> Result<Room> {
+        let request: create_room::v4::Request = request.into();
         let invite = request.invite.clone();
         let is_direct_room = request.is_direct;
-        let response = self.send(request, None).await?;
 
-        let base_room = self.base_client().get_or_create_room(&response.room_id, RoomState::Joined);
+        // Make createRoom events
+        let response = self.send(request, None).await?;
+        let room_id = response.room_id;
+
+        // Send createRoom events
+        let request = send_pdus::v4::Request::new(response.room_version, response.pdus);
+        self.send(request, None).await?;
+
+        let base_room = self.base_client().get_or_create_room(&room_id, RoomState::Joined);
 
         let joined_room = Room::new(self.clone(), base_room);
 
