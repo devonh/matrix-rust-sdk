@@ -1,7 +1,8 @@
 use std::ops::Deref;
 
-pub use self::openid::{OpenIdResponse, OpenIdState};
 use serde::{Deserialize, Serialize};
+
+pub use self::openid::{OpenIdResponse, OpenIdState};
 
 mod openid;
 mod permissions;

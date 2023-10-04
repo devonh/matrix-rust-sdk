@@ -17,10 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{
     from_str as from_json, from_value as from_json_value, to_string as to_json, Value as JsonValue,
 };
-use tokio::sync::{
-    mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
-    oneshot,
-};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::error;
 
 use self::messages::{
@@ -28,12 +25,12 @@ use self::messages::{
     Empty, IncomingMessage, IncomingMessageKind, OpenIdResponse, OpenIdState, OutgoingMessage,
     OutgoingMessageKind,
 };
-
 use super::{
     filter::{MatrixEventContent, MatrixEventFilterInput},
     Permissions,
 };
 
+mod incoming;
 mod messages;
 
 /// State machine that handles the client widget API interractions.
@@ -247,12 +244,12 @@ impl ClientApi {
 
                                 let response =
                                     match proxy.send(SendMatrixEvent((*body).clone())).await {
-                                        Ok(event_id) => {
-                                            body.map(Ok(messages::from_widget::SendEventResponse {
+                                        Ok(event_id) => body.map(Ok(
+                                            messages::from_widget::SendEventResponseBody {
                                                 room_id: room_id.to_string(),
                                                 event_id: event_id.to_string(),
-                                            }))
-                                        }
+                                            },
+                                        )),
                                         Err(err) => body.map(Err(err.into())),
                                     };
                                 let msg = OutgoingMessage {
@@ -269,7 +266,11 @@ impl ClientApi {
                     IncomingMessageKind::ToWidget(resp) => {}
                 },
                 Err(_) => {
-                    // TODO: Implement that sophisticated error handling that requires us sending different responses to the widget depending on the body of the original message. These are only used by the widget to print something to the console though, so not a deal breaker.
+                    // TODO: Implement that sophisticated error handling that
+                    // requires us sending different responses to the widget
+                    // depending on the body of the original message. These are
+                    // only used by the widget to print something to the console
+                    // though, so not a deal breaker.
                 }
             },
             Event::MatrixEventReceived(event) => {

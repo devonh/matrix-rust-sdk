@@ -4,9 +4,8 @@ use ruma::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::widget::client::SendEventCommand;
-
 use super::{openid::OpenIdResponse, Empty, Request, Response};
+use crate::widget::client::SendEventCommand;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "action")]
@@ -50,9 +49,9 @@ pub(crate) enum ResponseType {
     #[serde(rename = "get_openid")]
     GetOpenId(Response<Empty, OpenIdResponse>),
     #[serde(rename = "send_event")]
-    SendEvent(Response<SendEventBody, SendEventResponse>),
+    SendEvent(Response<SendEventBody, SendEventResponseBody>),
     #[serde(rename = "org.matrix.msc2876.read_events")]
-    ReadEvent(Response<ReadEventBody, ReadEventResponse>),
+    ReadEvent(Response<ReadEventBody, ReadEventResponseBody>),
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -107,17 +106,17 @@ pub enum ApiVersion {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct SendEventResponse {
+pub struct SendEventResponseBody {
     pub room_id: String,
     pub event_id: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct ReadEventResponse {
+pub struct ReadEventResponseBody {
     pub events: Vec<Raw<AnyTimelineEvent>>,
 }
 
-impl From<Vec<Raw<AnyTimelineEvent>>> for ReadEventResponse {
+impl From<Vec<Raw<AnyTimelineEvent>>> for ReadEventResponseBody {
     fn from(events: Vec<Raw<AnyTimelineEvent>>) -> Self {
         Self { events }
     }
