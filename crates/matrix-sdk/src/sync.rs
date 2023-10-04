@@ -37,7 +37,7 @@ use ruma::{
     serde::Raw,
     OwnedRoomId, RoomId,
 };
-use tracing::{debug, error, trace, warn};
+use tracing::{debug, error, warn};
 
 use crate::{event_handler::HandlerKind, Client, Result, Room};
 
@@ -260,7 +260,7 @@ impl Client {
         }
 
         // TODO: We should not do this every time, only if we receive room keys in the
-        // sync response.
+        // sync response, though it's not harmful as the OlmMachine knows what to do.
         self.encryption().backups().maybe_trigger_backup();
 
         debug!("Ran notification handlers in {:?}", now.elapsed());
