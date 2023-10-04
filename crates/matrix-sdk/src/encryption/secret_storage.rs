@@ -42,7 +42,7 @@
 //!     .await?;
 //!
 //! // Import the secrets.
-//! secret_store.import_secrets().await?
+//! secret_store.import_secrets().await?;
 //!
 //! // Our own device should now be verified.
 //! let device = client
@@ -51,7 +51,7 @@
 //!     .await?
 //!     .expect("We should be able to retrieve our own device");
 //!
-//! assert!(device.is_cross_signed_by_owner())
+//! assert!(device.is_cross_signed_by_owner());
 //!
 //! # anyhow::Ok(()) };
 //! ```

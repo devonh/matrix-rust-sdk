@@ -1460,6 +1460,7 @@ impl OlmMachine {
             progress_listener.on_progress(progress as i32, total as i32)
         };
 
+        #[allow(deprecated)]
         let result =
             self.runtime.block_on(self.inner.import_room_keys(keys, from_backup, listener))?;
 
