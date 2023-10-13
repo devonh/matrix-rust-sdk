@@ -34,7 +34,7 @@ use ruma::{
         read_marker::set_read_marker,
         receipt::create_receipt,
         redact::redact_event,
-        room::get_room_event,
+        room::{get_room_event, send_pdus},
         state::{get_state_events_for_key, send_state_event},
         tag::{create_tag, delete_tag},
         typing::create_typing_event::{self, v3::Typing},
@@ -154,9 +154,21 @@ impl Room {
                 false
             });
 
-        let request = join_room_by_id::v3::Request::new(self.inner.room_id().to_owned());
+        // Make join event
+        let request = join_room_by_id::unstable::Request::new(self.inner.room_id().to_owned());
         let response = self.client.send(request, None).await?;
-        self.client.base_client().room_joined(&response.room_id).await?;
+        let room_id = response.room_id;
+
+        // Send join event
+        let request = send_pdus::unstable::Request::new(
+            response.room_version,
+            response.via_server,
+            None,
+            vec![response.pdu],
+        );
+        self.client.send(request, None).await?;
+
+        self.client.base_client().room_joined(&room_id).await?;
 
         if mark_as_direct {
             self.set_is_direct(true).await?;
@@ -1572,15 +1584,26 @@ impl Room {
             (Raw::new(&content)?.cast(), event_type)
         };
 
-        let request = send_message_event::v3::Request::new_raw(
+        // Make event
+        let request = send_message_event::unstable::Request::new_raw(
             self.room_id().to_owned(),
             txn_id,
             event_type.into(),
             content,
         );
-
         let response = self.client.send(request, None).await?;
-        Ok(response)
+
+        // Send event
+        let request = send_pdus::unstable::Request::new(
+            // TODO: cryptoIDs - get this from the event?
+            ruma::room_version_id!("org.matrix.msc4014"),
+            None,
+            None,
+            vec![response.pdu],
+        );
+        self.client.send(request, None).await?;
+
+        Ok(send_message_event::v3::Response::new(response.event_id))
     }
 
     /// Send an attachment to this room.
@@ -1910,10 +1933,26 @@ impl Room {
         K: AsRef<str> + ?Sized,
     {
         self.ensure_room_joined()?;
-        let request =
-            send_state_event::v3::Request::new(self.room_id().to_owned(), state_key, &content)?;
+
+        // Make event
+        let request = send_state_event::unstable::Request::new(
+            self.room_id().to_owned(),
+            state_key,
+            &content,
+        )?;
         let response = self.client.send(request, None).await?;
-        Ok(response)
+
+        // Send event
+        let request = send_pdus::unstable::Request::new(
+            // TODO: cryptoIDs - get this from the event?
+            ruma::room_version_id!("org.matrix.msc4014"),
+            None,
+            None,
+            vec![response.pdu],
+        );
+        self.client.send(request, None).await?;
+
+        Ok(send_state_event::v3::Response::new(response.event_id))
     }
 
     /// Send a raw room state event to the homeserver.

@@ -1086,7 +1086,7 @@ impl Client {
     /// # };
     /// ```
     pub async fn create_room(&self, request: create_room::v3::Request) -> Result<Room> {
-        let request: create_room::v4::Request = request.into();
+        let request: create_room::unstable::Request = request.into();
         let invite = request.invite.clone();
         let is_direct_room = request.is_direct;
 
@@ -1095,7 +1095,8 @@ impl Client {
         let room_id = response.room_id;
 
         // Send createRoom events
-        let request = send_pdus::v4::Request::new(response.room_version, response.pdus);
+        let request =
+            send_pdus::unstable::Request::new(response.room_version, None, None, response.pdus);
         self.send(request, None).await?;
 
         let base_room = self.base_client().get_or_create_room(&room_id, RoomState::Joined);
