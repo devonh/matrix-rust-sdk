@@ -26,7 +26,7 @@ use ruma::{
             keys::{
                 claim_keys::v3::Response as KeysClaimResponse,
                 get_keys::v3::Response as KeysQueryResponse,
-                upload_keys::v3::Response as KeysUploadResponse,
+                upload_keys::unstable::Response as KeysUploadResponse,
                 upload_signatures::v3::Response as SignatureUploadResponse,
             },
             message::send_message_event::v3::Response as RoomMessageResponse,
@@ -519,6 +519,7 @@ impl OlmMachine {
         events: String,
         device_changes: DeviceLists,
         key_counts: HashMap<String, i32>,
+        pseudoid_counts: HashMap<String, i32>,
         unused_fallback_keys: Option<Vec<String>>,
         next_batch_token: String,
     ) -> Result<SyncChangesResult, CryptoStoreError> {
@@ -535,6 +536,17 @@ impl OlmMachine {
                 )
             })
             .collect();
+        let pseudoid_counts: BTreeMap<DeviceKeyAlgorithm, UInt> = pseudoid_counts
+            .into_iter()
+            .map(|(k, v)| {
+                (
+                    DeviceKeyAlgorithm::from(k),
+                    v.clamp(0, i32::MAX)
+                        .try_into()
+                        .expect("Couldn't convert pseudoid counts into an UInt"),
+                )
+            })
+            .collect();
 
         let unused_fallback_keys: Option<Vec<DeviceKeyAlgorithm>> =
             unused_fallback_keys.map(|u| u.into_iter().map(DeviceKeyAlgorithm::from).collect());
@@ -544,6 +556,7 @@ impl OlmMachine {
                 to_device_events: to_device.events,
                 changed_devices: &device_changes,
                 one_time_keys_counts: &key_counts,
+                one_time_pseudoids_counts: &pseudoid_counts,
                 unused_fallback_keys: unused_fallback_keys.as_deref(),
                 next_batch_token: Some(next_batch_token),
             }),

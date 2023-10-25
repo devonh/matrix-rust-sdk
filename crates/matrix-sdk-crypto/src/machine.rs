@@ -558,7 +558,7 @@ impl OlmMachine {
     /// performed.
     async fn receive_keys_upload_response(
         &self,
-        response: &upload_keys::v3::Response,
+        response: &upload_keys::unstable::Response,
     ) -> OlmResult<()> {
         self.inner.account.receive_keys_upload_response(response).await
     }
@@ -632,17 +632,21 @@ impl OlmMachine {
     /// the [`OlmMachine`] with the [`receive_keys_upload_response`].
     ///
     /// [`receive_keys_upload_response`]: #method.receive_keys_upload_response
-    async fn keys_for_upload(&self) -> Option<upload_keys::v3::Request> {
-        let (device_keys, one_time_keys, fallback_keys) =
+    async fn keys_for_upload(&self) -> Option<upload_keys::unstable::Request> {
+        let (device_keys, one_time_keys, fallback_keys, one_time_pseudoids) =
             self.inner.account.keys_for_upload().await;
 
-        if device_keys.is_none() && one_time_keys.is_empty() && fallback_keys.is_empty() {
+        if device_keys.is_none()
+            && one_time_keys.is_empty()
+            && fallback_keys.is_empty()
+            && one_time_pseudoids.is_empty()
+        {
             None
         } else {
             let device_keys = device_keys.map(|d| d.to_raw());
 
-            Some(assign!(upload_keys::v3::Request::new(), {
-                device_keys, one_time_keys, fallback_keys
+            Some(assign!(upload_keys::unstable::Request::new(), {
+                device_keys, one_time_keys, one_time_pseudoids, fallback_keys
             }))
         }
     }
@@ -990,6 +994,13 @@ impl OlmMachine {
         self.inner.account.update_key_counts(one_time_key_count, unused_fallback_keys).await;
     }
 
+    async fn update_pseudoid_counts(
+        &self,
+        one_time_pseudoid_count: &BTreeMap<DeviceKeyAlgorithm, UInt>,
+    ) {
+        self.inner.account.update_pseudoid_counts(one_time_pseudoid_count).await;
+    }
+
     async fn handle_to_device_event(&self, changes: &mut Changes, event: &ToDeviceEvents) {
         use crate::types::events::ToDeviceEvents::*;
 
@@ -1177,6 +1188,8 @@ impl OlmMachine {
             sync_changes.unused_fallback_keys,
         )
         .await;
+
+        self.update_pseudoid_counts(sync_changes.one_time_pseudoids_counts).await;
 
         if let Err(e) = self
             .inner
@@ -1986,6 +1999,8 @@ pub struct EncryptionSyncChanges<'a> {
     pub changed_devices: &'a DeviceLists,
     /// The number of one time keys.
     pub one_time_keys_counts: &'a BTreeMap<DeviceKeyAlgorithm, UInt>,
+    /// The number of one time pseudoids.
+    pub one_time_pseudoids_counts: &'a BTreeMap<DeviceKeyAlgorithm, UInt>,
     /// An optional list of fallback keys.
     pub unused_fallback_keys: Option<&'a [DeviceKeyAlgorithm]>,
     /// A next-batch token obtained from a to-device sync query.
@@ -2087,9 +2102,9 @@ pub(crate) mod tests {
         user_id!("@bob:example.com")
     }
 
-    fn keys_upload_response() -> upload_keys::v3::Response {
+    fn keys_upload_response() -> upload_keys::unstable::Response {
         let data = response_from_file(&test_json::KEYS_UPLOAD);
-        upload_keys::v3::Response::try_from_http_response(data)
+        upload_keys::unstable::Response::try_from_http_response(data)
             .expect("Can't parse the keys upload response")
     }
 
@@ -2119,36 +2134,39 @@ pub(crate) mod tests {
     pub(crate) async fn get_prepared_machine(
         user_id: &UserId,
         use_fallback_key: bool,
-    ) -> (OlmMachine, OneTimeKeys) {
+    ) -> (OlmMachine, OneTimeKeys, OneTimeKeys) {
         let machine = OlmMachine::new(user_id, bob_device_id()).await;
         machine.account().generate_fallback_key_helper().await;
         machine.account().update_uploaded_key_count(0);
+        machine.account().update_uploaded_pseudoid_count(0);
         machine.account().generate_one_time_keys().await;
+        machine.account().generate_one_time_pseudoids().await;
         let request = machine.keys_for_upload().await.expect("Can't prepare initial key upload");
         let response = keys_upload_response();
         machine.receive_keys_upload_response(&response).await.unwrap();
 
         let keys = if use_fallback_key { request.fallback_keys } else { request.one_time_keys };
+        let pseudoids = request.one_time_pseudoids;
 
-        (machine, keys)
+        (machine, keys, pseudoids)
     }
 
-    async fn get_machine_after_query() -> (OlmMachine, OneTimeKeys) {
-        let (machine, otk) = get_prepared_machine(user_id(), false).await;
+    async fn get_machine_after_query() -> (OlmMachine, OneTimeKeys, OneTimeKeys) {
+        let (machine, otk, otp) = get_prepared_machine(user_id(), false).await;
         let response = keys_query_response();
         let req_id = TransactionId::new();
 
         machine.receive_keys_query_response(&req_id, &response).await.unwrap();
 
-        (machine, otk)
+        (machine, otk, otp)
     }
 
     async fn get_machine_pair(
         alice: &UserId,
         bob: &UserId,
         use_fallback_key: bool,
-    ) -> (OlmMachine, OlmMachine, OneTimeKeys) {
-        let (bob, otk) = get_prepared_machine(bob, use_fallback_key).await;
+    ) -> (OlmMachine, OlmMachine, OneTimeKeys, OneTimeKeys) {
+        let (bob, otk, otp) = get_prepared_machine(bob, use_fallback_key).await;
 
         let alice_device = alice_device_id();
         let alice = OlmMachine::new(alice, alice_device).await;
@@ -2158,7 +2176,7 @@ pub(crate) mod tests {
         alice.store().save_devices(&[bob_device]).await.unwrap();
         bob.store().save_devices(&[alice_device]).await.unwrap();
 
-        (alice, bob, otk)
+        (alice, bob, otk, otp)
     }
 
     async fn get_machine_pair_with_session(
@@ -2166,7 +2184,7 @@ pub(crate) mod tests {
         bob: &UserId,
         use_fallback_key: bool,
     ) -> (OlmMachine, OlmMachine) {
-        let (alice, bob, one_time_keys) = get_machine_pair(alice, bob, use_fallback_key).await;
+        let (alice, bob, one_time_keys, _) = get_machine_pair(alice, bob, use_fallback_key).await;
 
         let mut bob_keys = BTreeMap::new();
 
@@ -2238,6 +2256,22 @@ pub(crate) mod tests {
         response.one_time_key_counts.insert(DeviceKeyAlgorithm::SignedCurve25519, uint!(50));
         machine.receive_keys_upload_response(&response).await.unwrap();
         assert!(machine.account().generate_one_time_keys().await.is_none());
+    }
+
+    #[async_test]
+    async fn generate_one_time_pseudoids() {
+        let machine = OlmMachine::new(user_id(), alice_device_id()).await;
+
+        assert!(machine.account().generate_one_time_pseudoids().await.is_some());
+
+        let mut response = keys_upload_response();
+
+        machine.receive_keys_upload_response(&response).await.unwrap();
+        assert!(machine.account().generate_one_time_pseudoids().await.is_some());
+
+        response.one_time_pseudoid_counts.insert(DeviceKeyAlgorithm::SignedCurve25519, uint!(50));
+        machine.receive_keys_upload_response(&response).await.unwrap();
+        assert!(machine.account().generate_one_time_pseudoids().await.is_none());
     }
 
     #[async_test]
@@ -2319,11 +2353,13 @@ pub(crate) mod tests {
     async fn test_keys_for_upload() {
         let machine = OlmMachine::new(user_id(), alice_device_id()).await;
         let key_counts = BTreeMap::from([(DeviceKeyAlgorithm::SignedCurve25519, 49u8.into())]);
+        let pseudoid_counts = BTreeMap::from([(DeviceKeyAlgorithm::SignedCurve25519, 49u8.into())]);
         machine
             .receive_sync_changes(EncryptionSyncChanges {
                 to_device_events: Vec::new(),
                 changed_devices: &Default::default(),
                 one_time_keys_counts: &key_counts,
+                one_time_pseudoids_counts: &pseudoid_counts,
                 unused_fallback_keys: None,
                 next_batch_token: None,
             })
@@ -2373,7 +2409,7 @@ pub(crate) mod tests {
 
     #[async_test]
     async fn test_keys_query() {
-        let (machine, _) = get_prepared_machine(user_id(), false).await;
+        let (machine, _, _) = get_prepared_machine(user_id(), false).await;
         let response = keys_query_response();
         let alice_id = user_id!("@alice:example.org");
         let alice_device_id: &DeviceId = device_id!("JLAFKJWSCS");
@@ -2391,7 +2427,7 @@ pub(crate) mod tests {
 
     #[async_test]
     async fn test_query_keys_for_users() {
-        let (machine, _) = get_prepared_machine(user_id(), false).await;
+        let (machine, _, _) = get_prepared_machine(user_id(), false).await;
         let alice_id = user_id!("@alice:example.org");
         let (_, request) = machine.query_keys_for_users(vec![alice_id]);
         assert!(request.device_keys.contains_key(alice_id));
@@ -2399,7 +2435,7 @@ pub(crate) mod tests {
 
     #[async_test]
     async fn test_missing_sessions_calculation() {
-        let (machine, _) = get_machine_after_query().await;
+        let (machine, _, _) = get_machine_after_query().await;
 
         let alice = alice_id();
         let alice_device = alice_device_id();
@@ -2429,7 +2465,7 @@ pub(crate) mod tests {
 
     #[async_test]
     async fn test_session_creation() {
-        let (alice_machine, bob_machine, mut one_time_keys) =
+        let (alice_machine, bob_machine, mut one_time_keys, _) =
             get_machine_pair(alice_id(), user_id(), false).await;
         let (device_key_id, one_time_key) = one_time_keys.pop_first().unwrap();
 
@@ -2454,7 +2490,7 @@ pub(crate) mod tests {
 
     #[async_test]
     async fn getting_most_recent_session() {
-        let (alice_machine, bob_machine, mut one_time_keys) =
+        let (alice_machine, bob_machine, mut one_time_keys, _) =
             get_machine_pair(alice_id(), user_id(), false).await;
         let (device_key_id, one_time_key) = one_time_keys.pop_first().unwrap();
 
@@ -2600,6 +2636,7 @@ pub(crate) mod tests {
                 to_device_events: vec![event],
                 changed_devices: &Default::default(),
                 one_time_keys_counts: &Default::default(),
+                one_time_pseudoids_counts: &Default::default(),
                 unused_fallback_keys: None,
                 next_batch_token: None,
             })
@@ -2740,6 +2777,7 @@ pub(crate) mod tests {
             to_device_events: vec![event],
             changed_devices: &Default::default(),
             one_time_keys_counts: &Default::default(),
+            one_time_pseudoids_counts: &Default::default(),
             unused_fallback_keys: None,
             next_batch_token: None,
         })
@@ -2912,7 +2950,7 @@ pub(crate) mod tests {
     /// functions
     #[async_test]
     async fn test_decrypt_unencrypted_event() {
-        let (bob, _) = get_prepared_machine(user_id(), false).await;
+        let (bob, _, _) = get_prepared_machine(user_id(), false).await;
         let room_id = room_id!("!test:example.org");
 
         let event = json!({
@@ -3135,7 +3173,7 @@ pub(crate) mod tests {
 
     #[async_test]
     async fn test_verification_states_multiple_device() {
-        let (bob, _) = get_prepared_machine(user_id(), false).await;
+        let (bob, _, _) = get_prepared_machine(user_id(), false).await;
 
         let other_user_id = user_id!("@web2:localhost:8482");
 
@@ -3539,12 +3577,14 @@ pub(crate) mod tests {
         let event = json_convert(&event).unwrap();
         let changed_devices = DeviceLists::new();
         let key_counts: BTreeMap<_, _> = Default::default();
+        let pseudoid_counts: BTreeMap<_, _> = Default::default();
 
         let _ = bob
             .receive_sync_changes(EncryptionSyncChanges {
                 to_device_events: vec![event],
                 changed_devices: &changed_devices,
                 one_time_keys_counts: &key_counts,
+                one_time_pseudoids_counts: &pseudoid_counts,
                 unused_fallback_keys: None,
                 next_batch_token: None,
             })
@@ -3584,6 +3624,7 @@ pub(crate) mod tests {
             to_device_events: vec![event],
             changed_devices: &changed_devices,
             one_time_keys_counts: &key_counts,
+            one_time_pseudoids_counts: &pseudoid_counts,
             unused_fallback_keys: None,
             next_batch_token: None,
         })

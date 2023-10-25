@@ -241,7 +241,7 @@ impl Account {
 
     pub async fn receive_keys_upload_response(
         &self,
-        response: &upload_keys::v3::Response,
+        response: &upload_keys::unstable::Response,
     ) -> OlmResult<()> {
         if !self.inner.shared() {
             debug!("Marking account as shared");
@@ -252,7 +252,9 @@ impl Account {
         // First mark the current keys as published, as updating the key counts might
         // generate some new keys if we're still below the limit.
         self.inner.mark_keys_as_published().await;
+        self.inner.mark_pseudoids_as_published().await;
         self.update_key_counts(&response.one_time_key_counts, None).await;
+        self.update_pseudoid_counts(&response.one_time_pseudoid_counts).await;
         self.store.save_account(self.inner.clone()).await?;
 
         Ok(())
@@ -513,6 +515,7 @@ pub struct ReadOnlyAccount {
     /// needs to set this for us, depending on the count we will suggest the
     /// client to upload new keys.
     uploaded_signed_key_count: Arc<AtomicU64>,
+    uploaded_signed_pseudoid_count: Arc<AtomicU64>,
     // The creation time of the account in milliseconds since epoch.
     creation_local_time: MilliSecondsSinceUnixEpoch,
 }
@@ -534,6 +537,8 @@ pub struct PickledAccount {
     pub shared: bool,
     /// The number of uploaded one-time keys we have on the server.
     pub uploaded_signed_key_count: u64,
+    /// The number of uploaded one-time pseudoids we have on the server.
+    pub uploaded_signed_pseudoid_count: u64,
     /// The local time creation of this account (milliseconds since epoch), used
     /// as creation time of own device
     #[serde(default = "default_account_creation_time")]
@@ -580,6 +585,8 @@ impl ReadOnlyAccount {
         // will be able to do so.
         account.generate_one_time_keys(account.max_number_of_one_time_keys());
 
+        account.generate_one_time_pseudoids(account.max_number_of_one_time_pseudoids());
+
         Self {
             user_id: user_id.into(),
             device_id: device_id.into(),
@@ -587,6 +594,7 @@ impl ReadOnlyAccount {
             identity_keys: Arc::new(identity_keys),
             shared: Arc::new(AtomicBool::new(false)),
             uploaded_signed_key_count: Arc::new(AtomicU64::new(0)),
+            uploaded_signed_pseudoid_count: Arc::new(AtomicU64::new(0)),
             creation_local_time: MilliSecondsSinceUnixEpoch::now(),
         }
     }
@@ -645,6 +653,20 @@ impl ReadOnlyAccount {
     /// Get the currently known uploaded key count.
     pub fn uploaded_key_count(&self) -> u64 {
         self.uploaded_signed_key_count.load(Ordering::SeqCst)
+    }
+
+    /// Update the uploaded pseudoid count.
+    ///
+    /// # Arguments
+    ///
+    /// * `new_count` - The new count that was reported by the server.
+    pub fn update_uploaded_pseudoid_count(&self, new_count: u64) {
+        self.uploaded_signed_pseudoid_count.store(new_count, Ordering::SeqCst);
+    }
+
+    /// Get the currently known uploaded pseudoid count.
+    pub fn uploaded_pseudoid_count(&self) -> u64 {
+        self.uploaded_signed_pseudoid_count.load(Ordering::SeqCst)
     }
 
     /// Has the account been shared with the server.
@@ -747,6 +769,106 @@ impl ReadOnlyAccount {
         }
     }
 
+    /// Get the one-time pseudoids of the account.
+    ///
+    /// This can be empty, keys need to be generated first.
+    pub async fn one_time_pseudoids(&self) -> HashMap<KeyId, Curve25519PublicKey> {
+        self.inner.lock().await.one_time_pseudoids()
+    }
+
+    /// Generate count number of one-time pseudoids.
+    pub async fn generate_one_time_pseudoids_helper(
+        &self,
+        count: usize,
+    ) -> OneTimeKeyGenerationResult {
+        self.inner.lock().await.generate_one_time_pseudoids(count)
+    }
+
+    /// Get the maximum number of one-time pseudoids the account can hold.
+    pub async fn max_one_time_pseudoids(&self) -> usize {
+        self.inner.lock().await.max_number_of_one_time_pseudoids()
+    }
+
+    /// Mark the current set of one-time pseudoids as being published.
+    pub async fn mark_pseudoids_as_published(&self) {
+        self.inner.lock().await.mark_pseudoids_as_published();
+    }
+
+    /// Get a tuple of device, one-time, and fallback keys that need to be
+    /// uploaded.
+    ///
+    /// If no keys need to be uploaded the `DeviceKeys` will be `None` and the
+    /// one-time and fallback keys maps will be empty.
+    pub async fn pseudoids_for_upload(
+        &self,
+    ) -> BTreeMap<OwnedDeviceKeyId, Raw<ruma::encryption::OneTimeKey>> {
+        let one_time_keys = self.signed_one_time_pseudoids().await;
+        one_time_keys
+    }
+
+    pub(crate) async fn update_pseudoid_counts(
+        &self,
+        one_time_pseudoid_counts: &BTreeMap<DeviceKeyAlgorithm, UInt>,
+    ) {
+        debug!("Updated pseudoID counts: {:?}", one_time_pseudoid_counts);
+        if let Some(count) = one_time_pseudoid_counts.get(&DeviceKeyAlgorithm::SignedCurve25519) {
+            let count: u64 = (*count).into();
+            let old_count = self.uploaded_pseudoid_count();
+
+            // Some servers might always return the key counts in the sync
+            // response, we don't want to the logs with noop changes if they do
+            // so.
+            if count != old_count {
+                debug!(
+                    "Updated uploaded one-time pseudoid count {} -> {count}.",
+                    self.uploaded_pseudoid_count(),
+                );
+            }
+
+            self.update_uploaded_pseudoid_count(count);
+            self.generate_one_time_pseudoids().await;
+        }
+    }
+
+    /// Generate new one-time keys that need to be uploaded to the server.
+    ///
+    /// Returns None if no keys need to be uploaded, otherwise the number of
+    /// newly generated one-time keys. May return 0 if some one-time keys are
+    /// already generated but weren't uploaded.
+    ///
+    /// Generally `Some` means that keys should be uploaded, while `None` means
+    /// that keys should not be uploaded.
+    #[instrument(skip_all)]
+    pub async fn generate_one_time_pseudoids(&self) -> Option<u64> {
+        // Only generate one-time keys if there aren't any, otherwise the caller
+        // might have failed to upload them the last time this method was
+        // called.
+        if self.one_time_pseudoids().await.is_empty() {
+            let count = self.uploaded_pseudoid_count();
+            let max_keys = self.max_one_time_pseudoids().await;
+
+            if count >= max_keys as u64 {
+                return None;
+            }
+
+            let key_count = (max_keys as u64) - count;
+            let key_count: usize = key_count.try_into().unwrap_or(max_keys);
+
+            let result = self.generate_one_time_pseudoids_helper(key_count).await;
+
+            debug!(
+                count = key_count,
+                discarded_keys = ?result.removed,
+                created_keys = ?result.created,
+                "Generated new one-time pseudoids"
+            );
+
+            Some(key_count as u64)
+        } else {
+            Some(0)
+        }
+    }
+
     pub(crate) async fn generate_fallback_key_helper(&self) {
         let mut account = self.inner.lock().await;
 
@@ -775,13 +897,15 @@ impl ReadOnlyAccount {
         Option<DeviceKeys>,
         BTreeMap<OwnedDeviceKeyId, Raw<ruma::encryption::OneTimeKey>>,
         BTreeMap<OwnedDeviceKeyId, Raw<ruma::encryption::OneTimeKey>>,
+        BTreeMap<OwnedDeviceKeyId, Raw<ruma::encryption::OneTimeKey>>,
     ) {
         let device_keys = if !self.shared() { Some(self.device_keys().await) } else { None };
 
         let one_time_keys = self.signed_one_time_keys().await;
         let fallback_keys = self.signed_fallback_keys().await;
+        let one_time_pseudoids = self.signed_one_time_pseudoids().await;
 
-        (device_keys, one_time_keys, fallback_keys)
+        (device_keys, one_time_keys, fallback_keys, one_time_pseudoids)
     }
 
     /// Mark the current set of one-time keys as being published.
@@ -833,6 +957,7 @@ impl ReadOnlyAccount {
             pickle,
             shared: self.shared(),
             uploaded_signed_key_count: self.uploaded_key_count(),
+            uploaded_signed_pseudoid_count: self.uploaded_pseudoid_count(),
             creation_local_time: self.creation_local_time,
         }
     }
@@ -887,6 +1012,9 @@ impl ReadOnlyAccount {
             identity_keys: Arc::new(identity_keys),
             shared: Arc::new(AtomicBool::from(pickle.shared)),
             uploaded_signed_key_count: Arc::new(AtomicU64::new(pickle.uploaded_signed_key_count)),
+            uploaded_signed_pseudoid_count: Arc::new(AtomicU64::new(
+                pickle.uploaded_signed_pseudoid_count,
+            )),
             creation_local_time: pickle.creation_local_time,
         })
     }
@@ -1002,6 +1130,21 @@ impl ReadOnlyAccount {
             BTreeMap::new()
         } else {
             self.signed_keys(one_time_keys, false).await
+        }
+    }
+
+    /// Generate, sign and prepare one-time pseudoids to be uploaded.
+    ///
+    /// If no one-time keys need to be uploaded returns an empty BTreeMap.
+    pub async fn signed_one_time_pseudoids(
+        &self,
+    ) -> BTreeMap<OwnedDeviceKeyId, Raw<ruma::encryption::OneTimeKey>> {
+        let one_time_pseudoids = self.one_time_pseudoids().await;
+
+        if one_time_pseudoids.is_empty() {
+            BTreeMap::new()
+        } else {
+            self.signed_keys(one_time_pseudoids, false).await
         }
     }
 
@@ -1382,10 +1525,10 @@ mod tests {
     async fn one_time_key_creation() -> Result<()> {
         let account = ReadOnlyAccount::with_device_id(user_id(), device_id());
 
-        let (_, one_time_keys, _) = account.keys_for_upload().await;
+        let (_, one_time_keys, _, _) = account.keys_for_upload().await;
         assert!(!one_time_keys.is_empty());
 
-        let (_, second_one_time_keys, _) = account.keys_for_upload().await;
+        let (_, second_one_time_keys, _, _) = account.keys_for_upload().await;
         assert!(!second_one_time_keys.is_empty());
 
         let device_key_ids: BTreeSet<&DeviceKeyId> =
@@ -1399,13 +1542,13 @@ mod tests {
         account.update_uploaded_key_count(50);
         account.generate_one_time_keys().await;
 
-        let (_, third_one_time_keys, _) = account.keys_for_upload().await;
+        let (_, third_one_time_keys, _, _) = account.keys_for_upload().await;
         assert!(third_one_time_keys.is_empty());
 
         account.update_uploaded_key_count(0);
         account.generate_one_time_keys().await;
 
-        let (_, fourth_one_time_keys, _) = account.keys_for_upload().await;
+        let (_, fourth_one_time_keys, _, _) = account.keys_for_upload().await;
         assert!(!fourth_one_time_keys.is_empty());
 
         let fourth_device_key_ids: BTreeSet<&DeviceKeyId> =
@@ -1419,7 +1562,7 @@ mod tests {
     async fn fallback_key_creation() -> Result<()> {
         let account = ReadOnlyAccount::with_device_id(user_id(), device_id());
 
-        let (_, _, fallback_keys) = account.keys_for_upload().await;
+        let (_, _, fallback_keys, _) = account.keys_for_upload().await;
 
         // We don't create fallback keys since we don't know if the server
         // supports them, we need to receive a sync response to decide if we're
@@ -1431,7 +1574,7 @@ mod tests {
         // A `None` here means that the server doesn't support fallback keys, no
         // fallback key gets uploaded.
         account.update_key_counts(&one_time_keys, None).await;
-        let (_, _, fallback_keys) = account.keys_for_upload().await;
+        let (_, _, fallback_keys, _) = account.keys_for_upload().await;
         assert!(fallback_keys.is_empty());
 
         // The empty array means that the server supports fallback keys but
@@ -1439,14 +1582,14 @@ mod tests {
         // a fallback key.
         let unused_fallback_keys = &[];
         account.update_key_counts(&one_time_keys, Some(unused_fallback_keys.as_ref())).await;
-        let (_, _, fallback_keys) = account.keys_for_upload().await;
+        let (_, _, fallback_keys, _) = account.keys_for_upload().await;
         assert!(!fallback_keys.is_empty());
         account.mark_keys_as_published().await;
 
         // There's an unused fallback key on the server, nothing to do here.
         let unused_fallback_keys = &[DeviceKeyAlgorithm::SignedCurve25519];
         account.update_key_counts(&one_time_keys, Some(unused_fallback_keys.as_ref())).await;
-        let (_, _, fallback_keys) = account.keys_for_upload().await;
+        let (_, _, fallback_keys, _) = account.keys_for_upload().await;
         assert!(fallback_keys.is_empty());
 
         Ok(())

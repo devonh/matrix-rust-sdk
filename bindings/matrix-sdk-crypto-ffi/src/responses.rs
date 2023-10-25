@@ -14,7 +14,7 @@ use ruma::{
         keys::{
             claim_keys::v3::{Request as KeysClaimRequest, Response as KeysClaimResponse},
             get_keys::v3::Response as KeysQueryResponse,
-            upload_keys::v3::Response as KeysUploadResponse,
+            upload_keys::unstable::Response as KeysUploadResponse,
             upload_signatures::v3::{
                 Request as RustSignatureUploadRequest, Response as SignatureUploadResponse,
             },

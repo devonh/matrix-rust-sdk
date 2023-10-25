@@ -225,6 +225,7 @@ impl RehydratedDevice {
             to_device_events: events,
             next_batch_token: None,
             one_time_keys_counts: &Default::default(),
+            one_time_pseudoids_counts: &Default::default(),
             changed_devices: &Default::default(),
             unused_fallback_keys: None,
         };
@@ -300,7 +301,7 @@ impl DehydratedDevice {
         pickle_key: &[u8; 32],
     ) -> Result<put_dehydrated_device::unstable::Request, DehydrationError> {
         self.account.generate_fallback_key_helper().await;
-        let (device_keys, one_time_keys, fallback_keys) = self.account.keys_for_upload().await;
+        let (device_keys, one_time_keys, fallback_keys, _) = self.account.keys_for_upload().await;
 
         let mut device_keys = device_keys
             .expect("We should always try to upload device keys for a dehydrated device.");
@@ -384,7 +385,7 @@ mod tests {
     }
 
     async fn get_olm_machine() -> OlmMachine {
-        let (olm_machine, _) = get_prepared_machine(user_id(), false).await;
+        let (olm_machine, _, _) = get_prepared_machine(user_id(), false).await;
         olm_machine.bootstrap_cross_signing(false).await.unwrap();
 
         olm_machine

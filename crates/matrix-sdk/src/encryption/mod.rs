@@ -300,11 +300,12 @@ impl Client {
     pub(crate) async fn keys_upload(
         &self,
         request_id: &TransactionId,
-        request: &upload_keys::v3::Request,
-    ) -> Result<upload_keys::v3::Response> {
+        request: &upload_keys::unstable::Request,
+    ) -> Result<upload_keys::unstable::Response> {
         debug!(
             device_keys = request.device_keys.is_some(),
             one_time_key_count = request.one_time_keys.len(),
+            one_time_pseudoid_count = request.one_time_pseudoids.len(),
             "Uploading public encryption keys",
         );
 
@@ -374,6 +375,8 @@ impl Client {
     async fn send_outgoing_request(&self, r: OutgoingRequest) -> Result<()> {
         use matrix_sdk_base::crypto::OutgoingRequests;
 
+        warn!("sending outgoing request: {:?}", r.request());
+
         match r.request() {
             OutgoingRequests::KeysQuery(request) => {
                 self.keys_query(r.request_id(), request.device_keys.clone()).await?;
@@ -420,6 +423,8 @@ impl Client {
 
     pub(crate) async fn send_outgoing_requests(&self) -> Result<()> {
         const MAX_CONCURRENT_REQUESTS: usize = 20;
+
+        warn!("Sending outgoing requests");
 
         // This is needed because sometimes we need to automatically
         // claim some one-time keys to unwedge an existing Olm session.

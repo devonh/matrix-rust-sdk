@@ -32,6 +32,7 @@ async fn main() -> Result<(), OlmError> {
 
     let changed_devices = DeviceLists::default();
     let one_time_key_counts = BTreeMap::default();
+    let one_time_pseudoid_counts = BTreeMap::default();
     let unused_fallback_keys = Some(Vec::new());
     let next_batch_token = "T0K3N".to_owned();
 
@@ -40,6 +41,7 @@ async fn main() -> Result<(), OlmError> {
         to_device_events: vec![],
         changed_devices: &changed_devices,
         one_time_keys_counts: &one_time_key_counts,
+        one_time_pseudoids_counts: &one_time_pseudoid_counts,
         unused_fallback_keys: unused_fallback_keys.as_deref(),
         next_batch_token: Some(next_batch_token),
     }).await?;

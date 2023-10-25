@@ -330,7 +330,7 @@ mod tests {
     #[async_test]
     async fn test_session_encrypt() {
         let user_id = user_id!("@alice:localhost");
-        let (machine, _) = get_prepared_machine(user_id, false).await;
+        let (machine, _, _) = get_prepared_machine(user_id, false).await;
         let room_id = room_id!("!test:localhost");
 
         machine.create_outbound_group_session_with_defaults(room_id).await.unwrap();
@@ -355,7 +355,7 @@ mod tests {
     async fn test_importing_better_session() -> OlmResult<()> {
         let user_id = user_id!("@alice:localhost");
 
-        let (machine, _) = get_prepared_machine(user_id, false).await;
+        let (machine, _, _) = get_prepared_machine(user_id, false).await;
         let room_id = room_id!("!test:localhost");
         let session = machine.create_inbound_session(room_id).await?;
 

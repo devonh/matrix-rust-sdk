@@ -66,6 +66,7 @@ impl BaseClient {
         trace!(
             to_device_events = to_device_events.len(),
             device_one_time_keys_count = e2ee.device_one_time_keys_count.len(),
+            one_time_pseudoids_count = e2ee.one_time_pseudoids_count.len(),
             device_unused_fallback_key_types =
                 e2ee.device_unused_fallback_key_types.as_ref().map(|v| v.len()),
             "Processing sliding sync e2ee events",
@@ -85,6 +86,7 @@ impl BaseClient {
                     to_device_events,
                     changed_devices: &e2ee.device_lists,
                     one_time_keys_counts: &e2ee.device_one_time_keys_count,
+                    one_time_pseudoids_counts: &e2ee.one_time_pseudoids_count,
                     unused_fallback_keys: e2ee.device_unused_fallback_key_types.as_deref(),
                     next_batch_token: to_device
                         .as_ref()

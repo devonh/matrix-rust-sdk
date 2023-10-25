@@ -1839,6 +1839,7 @@ mod tests {
                 to_device_events: vec![event],
                 changed_devices: &Default::default(),
                 one_time_keys_counts: &Default::default(),
+                one_time_pseudoids_counts: &Default::default(),
                 unused_fallback_keys: None,
                 next_batch_token: None,
             })

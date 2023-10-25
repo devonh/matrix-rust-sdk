@@ -129,6 +129,26 @@ pub(crate) mod tests {
     }
 
     #[async_test]
+    async fn one_time_pseudoid_creation() {
+        let account = ReadOnlyAccount::with_device_id(alice_id(), alice_device_id());
+        let one_time_pseudoids = account.one_time_pseudoids().await;
+
+        assert!(!one_time_pseudoids.is_empty());
+        assert_ne!(account.max_one_time_pseudoids().await, 0);
+
+        account.generate_one_time_pseudoids_helper(10).await;
+        let one_time_pseudoids = account.one_time_pseudoids().await;
+
+        assert_ne!(one_time_pseudoids.values().len(), 0);
+        assert_ne!(one_time_pseudoids.keys().len(), 0);
+        assert_ne!(one_time_pseudoids.iter().len(), 0);
+
+        account.mark_pseudoids_as_published().await;
+        let one_time_pseudoids = account.one_time_pseudoids().await;
+        assert!(one_time_pseudoids.is_empty());
+    }
+
+    #[async_test]
     async fn session_creation() {
         let alice = ReadOnlyAccount::with_device_id(alice_id(), alice_device_id());
         let bob = ReadOnlyAccount::with_device_id(bob_id(), bob_device_id());
