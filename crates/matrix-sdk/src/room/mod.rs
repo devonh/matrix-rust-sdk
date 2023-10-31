@@ -63,7 +63,7 @@ use ruma::{
     push::{Action, PushConditionRoomCtx},
     serde::Raw,
     uint, EventId, Int, MatrixToUri, MatrixUri, MxcUri, OwnedEventId, OwnedServerName,
-    OwnedTransactionId, OwnedUserId, TransactionId, UInt, UserId,
+    OwnedTransactionId, OwnedUserId, RoomVersionId, TransactionId, UInt, UserId,
 };
 use serde::de::DeserializeOwned;
 use thiserror::Error;
@@ -1029,7 +1029,15 @@ impl Room {
     #[instrument(skip_all)]
     pub async fn invite_user_by_id(&self, user_id: &UserId) -> Result<()> {
         let recipient = InvitationRecipient::UserId { user_id: user_id.to_owned() };
-        let request = invite_user::v3::Request::new(self.room_id().to_owned(), recipient);
+        let request = invite_user::unstable::Request::new(self.room_id().to_owned(), recipient);
+        let response = self.client.send(request, None).await?;
+
+        let request = send_pdus::unstable::Request::new(
+            RoomVersionId::try_from("org.matrix.msc4014").unwrap(),
+            None,
+            None,
+            vec![response.pdu],
+        );
         self.client.send(request, None).await?;
 
         Ok(())

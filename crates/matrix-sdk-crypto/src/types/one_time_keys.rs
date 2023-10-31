@@ -23,9 +23,41 @@ use std::collections::BTreeMap;
 use ruma::serde::Raw;
 use serde::{Deserialize, Serialize};
 use serde_json::{value::to_raw_value, Value};
-use vodozemac::Curve25519PublicKey;
+use vodozemac::{Curve25519PublicKey, Ed25519PublicKey};
 
-use super::{deserialize_curve_key, serialize_curve_key, Signatures};
+use super::{
+    deserialize_curve_key, deserialize_ed25519_key, serialize_curve_key, serialize_ed25519_key,
+    Signatures,
+};
+
+/// A key for the SignedCurve25519 algorithm
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UnsignedPseudoID {
+    /// The Ed25519 key that can be used as a pseudoid.
+    #[serde(
+        deserialize_with = "deserialize_ed25519_key",
+        serialize_with = "serialize_ed25519_key"
+    )]
+    key: Ed25519PublicKey,
+}
+
+impl UnsignedPseudoID {
+    /// Creates a new `UnsignedPseudoID` with the given key and signatures.
+    pub fn new(key: Ed25519PublicKey) -> Self {
+        Self { key }
+    }
+
+    /// Base64-encoded 32-byte Ed25519 public key.
+    pub fn key(&self) -> Ed25519PublicKey {
+        self.key
+    }
+
+    /// Serialize the one-time pseudoid into a Raw version.
+    pub fn into_raw<T>(self) -> Raw<T> {
+        let key = OneTimeKey::UnsignedKey(self);
+        Raw::from_json(to_raw_value(&key).expect("Coulnd't serialize one-time key"))
+    }
+}
 
 /// A key for the SignedCurve25519 algorithm
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -107,6 +139,9 @@ pub enum OneTimeKey {
     /// An unsigned Curve25519 one-time key.
     #[serde(deserialize_with = "deserialize_curve_key", serialize_with = "serialize_curve_key")]
     Key(Curve25519PublicKey),
+
+    /// An unsigned Ed25519 one-time key.
+    UnsignedKey(UnsignedPseudoID),
 
     /// An unknown one-time key type.
     Unknown(Value),

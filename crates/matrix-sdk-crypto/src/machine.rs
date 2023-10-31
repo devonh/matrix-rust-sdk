@@ -2044,7 +2044,7 @@ pub(crate) mod tests {
             IncomingResponse,
         },
         device_id,
-        encryption::OneTimeKey,
+        encryption::{OneTimeKey, OneTimePseudoID},
         events::{
             dummy::ToDeviceDummyEventContent,
             key::verification::VerificationMethod,
@@ -2085,6 +2085,7 @@ pub(crate) mod tests {
 
     /// These keys need to be periodically uploaded to the server.
     type OneTimeKeys = BTreeMap<OwnedDeviceKeyId, Raw<OneTimeKey>>;
+    type OneTimePseudoIDs = BTreeMap<OwnedDeviceKeyId, Raw<OneTimePseudoID>>;
 
     fn alice_id() -> &'static UserId {
         user_id!("@alice:example.org")
@@ -2134,7 +2135,7 @@ pub(crate) mod tests {
     pub(crate) async fn get_prepared_machine(
         user_id: &UserId,
         use_fallback_key: bool,
-    ) -> (OlmMachine, OneTimeKeys, OneTimeKeys) {
+    ) -> (OlmMachine, OneTimeKeys, OneTimePseudoIDs) {
         let machine = OlmMachine::new(user_id, bob_device_id()).await;
         machine.account().generate_fallback_key_helper().await;
         machine.account().update_uploaded_key_count(0);
@@ -2151,7 +2152,7 @@ pub(crate) mod tests {
         (machine, keys, pseudoids)
     }
 
-    async fn get_machine_after_query() -> (OlmMachine, OneTimeKeys, OneTimeKeys) {
+    async fn get_machine_after_query() -> (OlmMachine, OneTimeKeys, OneTimePseudoIDs) {
         let (machine, otk, otp) = get_prepared_machine(user_id(), false).await;
         let response = keys_query_response();
         let req_id = TransactionId::new();
@@ -2165,7 +2166,7 @@ pub(crate) mod tests {
         alice: &UserId,
         bob: &UserId,
         use_fallback_key: bool,
-    ) -> (OlmMachine, OlmMachine, OneTimeKeys, OneTimeKeys) {
+    ) -> (OlmMachine, OlmMachine, OneTimeKeys, OneTimePseudoIDs) {
         let (bob, otk, otp) = get_prepared_machine(bob, use_fallback_key).await;
 
         let alice_device = alice_device_id();

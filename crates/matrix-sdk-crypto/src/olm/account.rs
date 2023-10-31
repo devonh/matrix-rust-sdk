@@ -47,7 +47,7 @@ use vodozemac::{
     base64_encode,
     olm::{
         Account as InnerAccount, AccountPickle, IdentityKeys, OlmMessage,
-        OneTimeKeyGenerationResult, PreKeyMessage, SessionConfig,
+        OneTimeKeyGenerationResult, OneTimePseudoIDGenerationResult, PreKeyMessage, SessionConfig,
     },
     Curve25519PublicKey, Ed25519Signature, KeyId, PickleError,
 };
@@ -73,6 +73,7 @@ use crate::{
             },
         },
         CrossSigningKey, DeviceKeys, EventEncryptionAlgorithm, MasterPubkey, OneTimeKey, SignedKey,
+        UnsignedPseudoID,
     },
     CryptoStoreError, OlmError, SignatureError,
 };
@@ -772,15 +773,42 @@ impl ReadOnlyAccount {
     /// Get the one-time pseudoids of the account.
     ///
     /// This can be empty, keys need to be generated first.
-    pub async fn one_time_pseudoids(&self) -> HashMap<KeyId, Curve25519PublicKey> {
-        self.inner.lock().await.one_time_pseudoids()
+    pub async fn one_time_pseudoids(
+        &self,
+    ) -> BTreeMap<OwnedDeviceKeyId, Raw<ruma::encryption::OneTimePseudoID>> {
+        let one_time_keys = self.inner.lock().await.one_time_pseudoids();
+
+        if one_time_keys.is_empty() {
+            BTreeMap::new()
+        } else {
+            let mut keys_map = BTreeMap::new();
+
+            for (key_id, key) in one_time_keys {
+                let formatted_key = UnsignedPseudoID::new(key);
+                let key_copy = formatted_key.clone();
+                keys_map.insert(
+                    DeviceKeyId::from_parts(
+                        DeviceKeyAlgorithm::Ed25519,
+                        key_id.to_base64().as_str().into(),
+                    ),
+                    formatted_key.into_raw(),
+                );
+                debug!(
+                    key_value = ?to_raw_value(&key).expect("couldn't serialize pseudoid"),
+                    formatted_key = ?key_copy.into_raw::<ruma::encryption::OneTimePseudoID>(),
+                    "Raw pseudoID"
+                );
+            }
+
+            keys_map
+        }
     }
 
     /// Generate count number of one-time pseudoids.
     pub async fn generate_one_time_pseudoids_helper(
         &self,
         count: usize,
-    ) -> OneTimeKeyGenerationResult {
+    ) -> OneTimePseudoIDGenerationResult {
         self.inner.lock().await.generate_one_time_pseudoids(count)
     }
 
@@ -801,8 +829,8 @@ impl ReadOnlyAccount {
     /// one-time and fallback keys maps will be empty.
     pub async fn pseudoids_for_upload(
         &self,
-    ) -> BTreeMap<OwnedDeviceKeyId, Raw<ruma::encryption::OneTimeKey>> {
-        let one_time_keys = self.signed_one_time_pseudoids().await;
+    ) -> BTreeMap<OwnedDeviceKeyId, Raw<ruma::encryption::OneTimePseudoID>> {
+        let one_time_keys = self.one_time_pseudoids().await;
         one_time_keys
     }
 
@@ -897,13 +925,13 @@ impl ReadOnlyAccount {
         Option<DeviceKeys>,
         BTreeMap<OwnedDeviceKeyId, Raw<ruma::encryption::OneTimeKey>>,
         BTreeMap<OwnedDeviceKeyId, Raw<ruma::encryption::OneTimeKey>>,
-        BTreeMap<OwnedDeviceKeyId, Raw<ruma::encryption::OneTimeKey>>,
+        BTreeMap<OwnedDeviceKeyId, Raw<ruma::encryption::OneTimePseudoID>>,
     ) {
         let device_keys = if !self.shared() { Some(self.device_keys().await) } else { None };
 
         let one_time_keys = self.signed_one_time_keys().await;
         let fallback_keys = self.signed_fallback_keys().await;
-        let one_time_pseudoids = self.signed_one_time_pseudoids().await;
+        let one_time_pseudoids = self.one_time_pseudoids().await;
 
         (device_keys, one_time_keys, fallback_keys, one_time_pseudoids)
     }
@@ -1130,21 +1158,6 @@ impl ReadOnlyAccount {
             BTreeMap::new()
         } else {
             self.signed_keys(one_time_keys, false).await
-        }
-    }
-
-    /// Generate, sign and prepare one-time pseudoids to be uploaded.
-    ///
-    /// If no one-time keys need to be uploaded returns an empty BTreeMap.
-    pub async fn signed_one_time_pseudoids(
-        &self,
-    ) -> BTreeMap<OwnedDeviceKeyId, Raw<ruma::encryption::OneTimeKey>> {
-        let one_time_pseudoids = self.one_time_pseudoids().await;
-
-        if one_time_pseudoids.is_empty() {
-            BTreeMap::new()
-        } else {
-            self.signed_keys(one_time_pseudoids, false).await
         }
     }
 
