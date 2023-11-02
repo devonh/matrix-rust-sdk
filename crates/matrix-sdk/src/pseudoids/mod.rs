@@ -41,11 +41,22 @@ impl PseudoIDs {
         Self { client }
     }
 
-    /// Creates a new pseudoid for the room.
-    pub async fn create_pseudoid_for_room(&self, room: &str) -> Result<Ed25519SecretKey, Error> {
+    /// Creates a new pseudoid.
+    pub async fn create_pseudoid(&self) -> Result<Ed25519SecretKey, Error> {
         let olm = self.client.olm_machine().await;
         let machine = olm.as_ref().ok_or(Error::NoOlmMachine)?;
-        Ok(machine.create_pseudoid_for_room(room).await)
+        Ok(machine.create_pseudoid().await)
+    }
+
+    /// Associates a pseudoid with the given room.
+    pub async fn associate_pseudoid_with_room(
+        &self,
+        room: &str,
+        key: &Ed25519SecretKey,
+    ) -> Result<(), Error> {
+        let olm = self.client.olm_machine().await;
+        let machine = olm.as_ref().ok_or(Error::NoOlmMachine)?;
+        Ok(machine.associate_pseudoid_with_room(room, key).await)
     }
 
     /// Gets the existing pseudoid for a room if one exists.

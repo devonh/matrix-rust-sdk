@@ -1993,9 +1993,14 @@ impl OlmMachine {
         self.inner.account.inner.get_pseudoid_for_room(room).await
     }
 
-    /// Creates a new pseudoid for a room.
-    pub async fn create_pseudoid_for_room(&self, room: &str) -> Ed25519SecretKey {
-        self.inner.account.inner.create_pseudoid_for_room(room).await
+    /// Associates a pseudoid with this room.
+    pub async fn associate_pseudoid_with_room(&self, room: &str, key: &Ed25519SecretKey) {
+        self.inner.account.inner.associate_pseudoid_with_room(room, key).await
+    }
+
+    /// Creates a new pseudoid.
+    pub async fn create_pseudoid(&self) -> Ed25519SecretKey {
+        self.inner.account.inner.create_pseudoid().await
     }
 }
 

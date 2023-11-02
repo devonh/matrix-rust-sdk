@@ -1503,10 +1503,16 @@ impl ReadOnlyAccount {
         account.get_pseudoid_for_room(room)
     }
 
-    /// Creates a new pseudoid for the room.
-    pub async fn create_pseudoid_for_room(&self, room: &str) -> Ed25519SecretKey {
+    /// Associates a pseudoid with this room.
+    pub async fn associate_pseudoid_with_room(&self, room: &str, key: &Ed25519SecretKey) {
         let mut account = self.inner.lock().await;
-        account.generate_pseudoid_for_room(room)
+        account.associate_pseudoid_with_room(room, key);
+    }
+
+    /// Creates a new pseudoid.
+    pub async fn create_pseudoid(&self) -> Ed25519SecretKey {
+        let mut account = self.inner.lock().await;
+        account.generate_pseudoid()
     }
 }
 

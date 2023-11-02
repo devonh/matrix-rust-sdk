@@ -1122,12 +1122,13 @@ impl Client {
         let invite = request.invite.clone();
         let is_direct_room = request.is_direct;
 
-        let pseudoid = self.pseudoids().create_pseudoid_for_room("").await?;
+        let pseudoid = self.pseudoids().create_pseudoid().await?;
         request.sender_id = pseudoid.public_key().to_base64();
 
         // Make createRoom events
         let response = self.send(request, None).await?;
         let room_id = response.room_id;
+        self.pseudoids().associate_pseudoid_with_room(room_id.as_str(), &pseudoid).await?;
 
         let pdus: Vec<Raw<AnyTimelineEvent>> = response
             .pdus
