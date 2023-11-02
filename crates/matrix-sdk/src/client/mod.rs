@@ -62,7 +62,7 @@ use ruma::{
     assign,
     events::AnyTimelineEvent,
     push::Ruleset,
-    serde::{Base64, Raw},
+    serde::Raw,
     signatures::Ed25519KeyPair,
     DeviceId, OwnedDeviceId, OwnedRoomId, OwnedServerName, RoomAliasId, RoomId, RoomOrAliasId,
     ServerName, UInt, UserId,
@@ -989,8 +989,20 @@ impl Client {
     ///
     /// * `room_id` - The `RoomId` of the room to be joined.
     pub async fn join_room_by_id(&self, room_id: &RoomId) -> Result<Room> {
-        let request = join_room_by_id::v3::Request::new(room_id.to_owned());
+        // Make join event
+        let request = join_room_by_id::unstable::Request::new(room_id.to_owned());
         let response = self.send(request, None).await?;
+
+        // Send join event
+        let request = send_pdus::unstable::Request::new(
+            response.room_version,
+            response.via_server,
+            None,
+            vec![response.pdu],
+        );
+
+        self.send(request, None).await?;
+
         let base_room = self.base_client().room_joined(&response.room_id).await?;
         Ok(Room::new(self.clone(), base_room))
     }
@@ -1009,10 +1021,22 @@ impl Client {
         alias: &RoomOrAliasId,
         server_names: &[OwnedServerName],
     ) -> Result<Room> {
-        let request = assign!(join_room_by_id_or_alias::v3::Request::new(alias.to_owned()), {
+        // Make join event
+        let request = assign!(join_room_by_id_or_alias::unstable::Request::new(alias.to_owned()), {
             server_name: server_names.to_owned(),
         });
         let response = self.send(request, None).await?;
+
+        // Send join event
+        let request = send_pdus::unstable::Request::new(
+            response.room_version,
+            response.via_server,
+            None,
+            vec![response.pdu],
+        );
+
+        self.send(request, None).await?;
+
         let base_room = self.base_client().room_joined(&response.room_id).await?;
         Ok(Room::new(self.clone(), base_room))
     }
