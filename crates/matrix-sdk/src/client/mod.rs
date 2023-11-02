@@ -60,7 +60,10 @@ use ruma::{
         MatrixVersion, OutgoingRequest,
     },
     assign,
+    events::AnyTimelineEvent,
     push::Ruleset,
+    serde::{Base64, Raw},
+    signatures::Ed25519KeyPair,
     DeviceId, OwnedDeviceId, OwnedRoomId, OwnedServerName, RoomAliasId, RoomId, RoomOrAliasId,
     ServerName, UInt, UserId,
 };
@@ -86,7 +89,7 @@ use crate::{
     TransmissionProgress,
 };
 #[cfg(feature = "e2e-encryption")]
-use crate::{encryption::Encryption, store_locks::CrossProcessStoreLock};
+use crate::{encryption::Encryption, pseudoids::PseudoIDs, store_locks::CrossProcessStoreLock};
 
 mod builder;
 mod futures;
@@ -452,6 +455,11 @@ impl Client {
     #[cfg(feature = "e2e-encryption")]
     pub fn encryption(&self) -> Encryption {
         Encryption::new(self.clone())
+    }
+
+    /// Get the pseudoid manager of the client.
+    pub fn pseudoids(&self) -> PseudoIDs {
+        PseudoIDs::new(self.clone())
     }
 
     /// Get the media manager of the client.
@@ -1086,17 +1094,44 @@ impl Client {
     /// # };
     /// ```
     pub async fn create_room(&self, request: create_room::v3::Request) -> Result<Room> {
-        let request: create_room::unstable::Request = request.into();
+        let mut request: create_room::unstable::Request = request.into();
         let invite = request.invite.clone();
         let is_direct_room = request.is_direct;
+
+        let pseudoid = self.pseudoids().create_pseudoid_for_room("").await?;
+        request.sender_id = pseudoid.public_key().to_base64();
 
         // Make createRoom events
         let response = self.send(request, None).await?;
         let room_id = response.room_id;
 
+        let pdus: Vec<Raw<AnyTimelineEvent>> = response
+            .pdus
+            .into_iter()
+            .map(|pdu| {
+                let mut object = serde_json::from_str(pdu.json().get()).unwrap();
+                let public_key = pseudoid.public_key().clone();
+                ruma::signatures::hash_and_sign_event(
+                    &public_key.to_base64(),
+                    &Ed25519KeyPair::new(
+                        ed25519_dalek::pkcs8::ALGORITHM_OID,
+                        &*pseudoid.to_bytes(),
+                        Some(public_key.as_bytes()),
+                        "1".to_string(),
+                    )
+                    .unwrap(),
+                    &mut object,
+                    &response.room_version,
+                )
+                .unwrap();
+
+                info!("Signed event with public key: {:?}", public_key.to_base64());
+                Raw::from_json_string(serde_json::to_string(&object).unwrap()).unwrap()
+            })
+            .collect();
+
         // Send createRoom events
-        let request =
-            send_pdus::unstable::Request::new(response.room_version, None, None, response.pdus);
+        let request = send_pdus::unstable::Request::new(response.room_version, None, None, pdus);
         self.send(request, None).await?;
 
         let base_room = self.base_client().get_or_create_room(&room_id, RoomState::Joined);

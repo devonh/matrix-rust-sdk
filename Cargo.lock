@@ -1203,9 +1203,9 @@ source = "git+https://github.com/dalek-cryptography/curve25519-dalek/?rev=e44d4b
 dependencies = [
  "cfg-if",
  "cpufeatures",
- "curve25519-dalek-derive",
+ "curve25519-dalek-derive 0.1.0",
  "digest",
- "fiat-crypto",
+ "fiat-crypto 0.1.20",
  "platforms",
  "rustc_version",
  "serde",
@@ -1214,9 +1214,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "curve25519-dalek"
+version = "4.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e89b8c6a2e4b1f45971ad09761aafb85514a84744b67a95e32c3cc1352d1f65c"
+dependencies = [
+ "cfg-if",
+ "cpufeatures",
+ "curve25519-dalek-derive 0.1.1",
+ "digest",
+ "fiat-crypto 0.2.2",
+ "platforms",
+ "rustc_version",
+ "subtle",
+ "zeroize",
+]
+
+[[package]]
 name = "curve25519-dalek-derive"
 version = "0.1.0"
 source = "git+https://github.com/dalek-cryptography/curve25519-dalek/?rev=e44d4b5903106dde0e5b28a2580061de7dfe8a9f#e44d4b5903106dde0e5b28a2580061de7dfe8a9f"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.31",
+]
+
+[[package]]
+name = "curve25519-dalek-derive"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f46882e17999c6cc590af592290432be3bce0428cb0d5f8b6715e4dc7b383eb3"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1471,7 +1499,21 @@ name = "ed25519-dalek"
 version = "2.0.0-rc.3"
 source = "git+https://github.com/dalek-cryptography/curve25519-dalek/?rev=e44d4b5903106dde0e5b28a2580061de7dfe8a9f#e44d4b5903106dde0e5b28a2580061de7dfe8a9f"
 dependencies = [
- "curve25519-dalek",
+ "curve25519-dalek 4.0.0",
+ "ed25519",
+ "rand_core 0.6.4",
+ "serde",
+ "sha2",
+ "zeroize",
+]
+
+[[package]]
+name = "ed25519-dalek"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7277392b266383ef8396db7fdeb1e77b6c52fed775f5df15bb24f35b72156980"
+dependencies = [
+ "curve25519-dalek 4.1.1",
  "ed25519",
  "rand_core 0.6.4",
  "serde",
@@ -1801,6 +1843,12 @@ name = "fiat-crypto"
 version = "0.1.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e825f6987101665dea6ec934c09ec6d721de7bc1bf92248e1d5810c8cd636b77"
+
+[[package]]
+name = "fiat-crypto"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a481586acf778f1b1455424c343f71124b048ffa5f4fc3f8f6ae9dc432dcb3c7"
 
 [[package]]
 name = "findshlibs"
@@ -3043,6 +3091,7 @@ dependencies = [
  "ctor",
  "dashmap",
  "dirs 5.0.1",
+ "ed25519-dalek 2.0.0",
  "event-listener",
  "eyeball",
  "eyeball-im",
@@ -4850,6 +4899,7 @@ dependencies = [
  "ruma-federation-api",
  "ruma-html",
  "ruma-push-gateway-api",
+ "ruma-signatures",
 ]
 
 [[package]]
@@ -4974,6 +5024,20 @@ dependencies = [
  "ruma-events",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "ruma-signatures"
+version = "0.13.1"
+dependencies = [
+ "base64 0.21.3",
+ "ed25519-dalek 2.0.0",
+ "pkcs8",
+ "rand 0.8.5",
+ "ruma-common",
+ "serde_json",
+ "sha2",
+ "thiserror",
 ]
 
 [[package]]
@@ -6409,8 +6473,8 @@ dependencies = [
  "arrayvec",
  "base64 0.21.3",
  "cbc",
- "curve25519-dalek",
- "ed25519-dalek",
+ "curve25519-dalek 4.0.0",
+ "ed25519-dalek 2.0.0-rc.3",
  "getrandom 0.2.10",
  "hkdf",
  "hmac",
@@ -6756,7 +6820,7 @@ name = "x25519-dalek"
 version = "2.0.0-rc.3"
 source = "git+https://github.com/dalek-cryptography/curve25519-dalek/?rev=e44d4b5903106dde0e5b28a2580061de7dfe8a9f#e44d4b5903106dde0e5b28a2580061de7dfe8a9f"
 dependencies = [
- "curve25519-dalek",
+ "curve25519-dalek 4.0.0",
  "rand_core 0.6.4",
  "serde",
  "zeroize",

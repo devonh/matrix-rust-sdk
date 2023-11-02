@@ -44,6 +44,7 @@ pub mod media;
 pub mod notification_settings;
 #[cfg(feature = "experimental-oidc")]
 pub mod oidc;
+pub mod pseudoids;
 pub mod room;
 
 #[cfg(feature = "experimental-sliding-sync")]

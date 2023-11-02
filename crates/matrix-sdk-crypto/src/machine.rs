@@ -51,7 +51,7 @@ use tracing::{
 };
 use vodozemac::{
     megolm::{DecryptionError, SessionOrdering},
-    Curve25519PublicKey, Ed25519Signature,
+    Curve25519PublicKey, Ed25519SecretKey, Ed25519Signature,
 };
 
 #[cfg(feature = "backups_v1")]
@@ -1986,6 +1986,16 @@ impl OlmMachine {
     #[cfg(any(feature = "testing", test))]
     pub fn uploaded_key_count(&self) -> u64 {
         self.inner.account.uploaded_key_count()
+    }
+
+    /// Gets the existing pseudoid for a room if one exists.
+    pub async fn get_pseudoid_for_room(&self, room: &str) -> Option<Ed25519SecretKey> {
+        self.inner.account.inner.get_pseudoid_for_room(room).await
+    }
+
+    /// Creates a new pseudoid for a room.
+    pub async fn create_pseudoid_for_room(&self, room: &str) -> Ed25519SecretKey {
+        self.inner.account.inner.create_pseudoid_for_room(room).await
     }
 }
 

@@ -49,7 +49,7 @@ use vodozemac::{
         Account as InnerAccount, AccountPickle, IdentityKeys, OlmMessage,
         OneTimeKeyGenerationResult, OneTimePseudoIDGenerationResult, PreKeyMessage, SessionConfig,
     },
-    Curve25519PublicKey, Ed25519Signature, KeyId, PickleError,
+    Curve25519PublicKey, Ed25519SecretKey, Ed25519Signature, KeyId, PickleError,
 };
 
 use super::{
@@ -1495,6 +1495,18 @@ impl ReadOnlyAccount {
             .unwrap();
 
         (our_session, other_session.session)
+    }
+
+    /// Gets the pseudoid associated with the room if one exists.
+    pub async fn get_pseudoid_for_room(&self, room: &str) -> Option<Ed25519SecretKey> {
+        let account = self.inner.lock().await;
+        account.get_pseudoid_for_room(room)
+    }
+
+    /// Creates a new pseudoid for the room.
+    pub async fn create_pseudoid_for_room(&self, room: &str) -> Ed25519SecretKey {
+        let mut account = self.inner.lock().await;
+        account.generate_pseudoid_for_room(room)
     }
 }
 
