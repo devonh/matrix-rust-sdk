@@ -1509,6 +1509,16 @@ impl ReadOnlyAccount {
         account.associate_pseudoid_with_room(room, key);
     }
 
+    /// Claims a one-time pseudoid for this room.
+    pub async fn claim_one_time_pseudoid_for_room(
+        &self,
+        room: &str,
+        key: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut account = self.inner.lock().await;
+        account.claim_one_time_pseudoid_for_room(room, key)
+    }
+
     /// Creates a new pseudoid.
     pub async fn create_pseudoid(&self) -> Ed25519SecretKey {
         let mut account = self.inner.lock().await;

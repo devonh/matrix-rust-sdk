@@ -28,7 +28,7 @@ use ruma::{
     serde::Raw,
     RoomId,
 };
-use tracing::{instrument, trace, warn};
+use tracing::{info, instrument, trace, warn};
 
 use super::BaseClient;
 #[cfg(feature = "e2e-encryption")]
@@ -246,13 +246,9 @@ impl BaseClient {
 
         // Find or create the room in the store
         #[allow(unused_mut)] // Required for some feature flag combinations
-        let (mut room, mut room_info, invited_room) = self.process_sliding_sync_room_membership(
-            room_data,
-            &state_events,
-            store,
-            room_id,
-            changes,
-        );
+        let (mut room, mut room_info, invited_room) = self
+            .process_sliding_sync_room_membership(room_data, &state_events, store, room_id, changes)
+            .await;
 
         room_info.mark_state_partially_synced();
 
@@ -353,7 +349,7 @@ impl BaseClient {
     /// If any invite_state exists, we take it to mean that we are invited to
     /// this room, unless that state contains membership events that specify
     /// otherwise. https://github.com/matrix-org/matrix-spec-proposals/blob/kegan/sync-v3/proposals/3575-sync.md#room-list-parameters
-    fn process_sliding_sync_room_membership(
+    async fn process_sliding_sync_room_membership(
         &self,
         room_data: &v4::SlidingSyncRoom,
         state_events: &[AnySyncStateEvent],
@@ -362,6 +358,9 @@ impl BaseClient {
         changes: &mut StateChanges,
     ) -> (Room, RoomInfo, Option<InvitedRoom>) {
         if let Some(invite_state) = &room_data.invite_state {
+            // TODO: cryptoIDs - is this the invite we're talking about?
+            // if so, process & store the one-time pseudoid here?
+            warn!("Received sliding sync invite for {:?}", room_id);
             let room = store.get_or_create_room(room_id, RoomState::Invited);
             let mut room_info = room.clone_info();
 
@@ -379,6 +378,23 @@ impl BaseClient {
             room_info.mark_as_invited();
 
             self.handle_invited_state(invite_state.as_slice(), &mut room_info, changes);
+
+            if let Some(pseudoid) = &room_data.pseudoid {
+                info!("Got pseudoid with invite: {:?}", pseudoid);
+                if let Some(o) = self.olm_machine().await.as_ref() {
+                    if let Err(e) =
+                        o.claim_one_time_pseudoid_for_room(&room_id.as_str(), pseudoid).await
+                    {
+                        tracing::error!(
+                            "Failed claiming one-time pseudoid for room: {} {:?}",
+                            room_id.as_str(),
+                            e
+                        );
+                    }
+                }
+            } else {
+                tracing::error!("Got no pseudoid with invite");
+            }
 
             (
                 room,
@@ -401,6 +417,23 @@ impl BaseClient {
             // required_state and timeline, so we must process required_state and timeline
             // looking for relevant membership events.
             self.handle_own_room_membership(state_events, &mut room_info);
+
+            if let Some(pseudoid) = &room_data.pseudoid {
+                info!("Got pseudoid with invite: {:?}", pseudoid);
+                if let Some(o) = self.olm_machine().await.as_ref() {
+                    if let Err(e) =
+                        o.claim_one_time_pseudoid_for_room(&room_id.as_str(), pseudoid).await
+                    {
+                        tracing::error!(
+                            "Failed claiming one-time pseudoid for room: {} {:?}",
+                            room_id.as_str(),
+                            e
+                        );
+                    }
+                }
+            } else {
+                tracing::error!("Got no pseudoid with invite");
+            }
 
             (room, room_info, None)
         }

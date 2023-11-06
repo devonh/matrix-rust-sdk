@@ -131,8 +131,45 @@ impl Room {
             return Err(Error::WrongRoomState(WrongRoomState::new("Joined or Invited", state)));
         }
 
-        let request = leave_room::v3::Request::new(self.inner.room_id().to_owned());
-        self.client.send(request, None).await?;
+        // Make leave event
+        let request = leave_room::unstable::Request::new(self.inner.room_id().to_owned());
+        let response = self.client.send(request, None).await?;
+
+        // Send leave event
+        match self.client.pseudoids().get_pseudoid_for_room(self.room_id().as_str()).await {
+            Some(pseudoid) => {
+                // TODO: cryptoIDs - get the room version for this room in a better way
+                let room_version = RoomVersionId::try_from("org.matrix.msc4014").unwrap();
+                let mut object = serde_json::from_str(response.pdu.json().get()).unwrap();
+                let public_key = pseudoid.public_key().clone();
+                ruma::signatures::hash_and_sign_event(
+                    &public_key.to_base64(),
+                    &Ed25519KeyPair::new(
+                        ed25519_dalek::pkcs8::ALGORITHM_OID,
+                        &*pseudoid.to_bytes(),
+                        Some(public_key.as_bytes()),
+                        "1".to_string(),
+                    )
+                    .unwrap(),
+                    &mut object,
+                    &room_version,
+                )
+                .unwrap();
+
+                info!("Signed event with public key: {:?}", public_key.to_base64());
+                let signed_event =
+                    Raw::from_json_string(serde_json::to_string(&object).unwrap()).unwrap();
+
+                let request =
+                    send_pdus::unstable::Request::new(room_version, None, None, vec![signed_event]);
+                self.client.send(request, None).await?;
+            }
+            None => {
+                tracing::error!("Failed getting pseudoid for room");
+                return Err(Error::Pseudoid);
+            }
+        }
+
         self.client.base_client().room_left(self.room_id()).await?;
         Ok(())
     }
@@ -161,13 +198,43 @@ impl Room {
         let room_id = response.room_id;
 
         // Send join event
-        let request = send_pdus::unstable::Request::new(
-            response.room_version,
-            response.via_server,
-            None,
-            vec![response.pdu],
-        );
-        self.client.send(request, None).await?;
+        match self.client.pseudoids().get_pseudoid_for_room(self.room_id().as_str()).await {
+            Some(pseudoid) => {
+                // TODO: cryptoIDs - get the room version for this room in a better way
+                let room_version = RoomVersionId::try_from("org.matrix.msc4014").unwrap();
+                let mut object = serde_json::from_str(response.pdu.json().get()).unwrap();
+                let public_key = pseudoid.public_key().clone();
+                ruma::signatures::hash_and_sign_event(
+                    &public_key.to_base64(),
+                    &Ed25519KeyPair::new(
+                        ed25519_dalek::pkcs8::ALGORITHM_OID,
+                        &*pseudoid.to_bytes(),
+                        Some(public_key.as_bytes()),
+                        "1".to_string(),
+                    )
+                    .unwrap(),
+                    &mut object,
+                    &room_version,
+                )
+                .unwrap();
+
+                info!("Signed event with public key: {:?}", public_key.to_base64());
+                let signed_event =
+                    Raw::from_json_string(serde_json::to_string(&object).unwrap()).unwrap();
+
+                let request = send_pdus::unstable::Request::new(
+                    response.room_version,
+                    response.via_server,
+                    None,
+                    vec![signed_event],
+                );
+                self.client.send(request, None).await?;
+            }
+            None => {
+                tracing::error!("Failed getting pseudoid for room");
+                return Err(Error::Pseudoid);
+            }
+        }
 
         self.client.base_client().room_joined(&room_id).await?;
 
@@ -1626,19 +1693,52 @@ impl Room {
             event_type.into(),
             content,
         );
-        let response = self.client.send(request, None).await?;
+        let response = self.client.send(request, None).await;
+        match response {
+            Err(e) => {
+                warn!("Failed sending message: {:?}", e);
+                return Err(e.into());
+            }
+            _ => (),
+        }
+        let response = response.unwrap();
 
         // Send event
-        let request = send_pdus::unstable::Request::new(
-            // TODO: cryptoIDs - get this from the event?
-            ruma::room_version_id!("org.matrix.msc4014"),
-            None,
-            None,
-            vec![response.pdu],
-        );
-        self.client.send(request, None).await?;
+        match self.client.pseudoids().get_pseudoid_for_room(self.room_id().as_str()).await {
+            Some(pseudoid) => {
+                // TODO: cryptoIDs - get the room version for this room in a better way
+                let room_version = RoomVersionId::try_from("org.matrix.msc4014").unwrap();
+                let mut object = serde_json::from_str(response.pdu.json().get()).unwrap();
+                let public_key = pseudoid.public_key().clone();
+                ruma::signatures::hash_and_sign_event(
+                    &public_key.to_base64(),
+                    &Ed25519KeyPair::new(
+                        ed25519_dalek::pkcs8::ALGORITHM_OID,
+                        &*pseudoid.to_bytes(),
+                        Some(public_key.as_bytes()),
+                        "1".to_string(),
+                    )
+                    .unwrap(),
+                    &mut object,
+                    &room_version,
+                )
+                .unwrap();
 
-        Ok(send_message_event::v3::Response::new(response.event_id))
+                info!("Signed event with public key: {:?}", public_key.to_base64());
+                let signed_event =
+                    Raw::from_json_string(serde_json::to_string(&object).unwrap()).unwrap();
+
+                let request =
+                    send_pdus::unstable::Request::new(room_version, None, None, vec![signed_event]);
+                self.client.send(request, None).await?;
+
+                Ok(send_message_event::v3::Response::new(response.event_id))
+            }
+            None => {
+                tracing::error!("Failed getting pseudoid for room");
+                Err(Error::Pseudoid)
+            }
+        }
     }
 
     /// Send an attachment to this room.
@@ -1978,16 +2078,41 @@ impl Room {
         let response = self.client.send(request, None).await?;
 
         // Send event
-        let request = send_pdus::unstable::Request::new(
-            // TODO: cryptoIDs - get this from the event?
-            ruma::room_version_id!("org.matrix.msc4014"),
-            None,
-            None,
-            vec![response.pdu],
-        );
-        self.client.send(request, None).await?;
+        match self.client.pseudoids().get_pseudoid_for_room(self.room_id().as_str()).await {
+            Some(pseudoid) => {
+                // TODO: cryptoIDs - get the room version for this room in a better way
+                let room_version = RoomVersionId::try_from("org.matrix.msc4014").unwrap();
+                let mut object = serde_json::from_str(response.pdu.json().get()).unwrap();
+                let public_key = pseudoid.public_key().clone();
+                ruma::signatures::hash_and_sign_event(
+                    &public_key.to_base64(),
+                    &Ed25519KeyPair::new(
+                        ed25519_dalek::pkcs8::ALGORITHM_OID,
+                        &*pseudoid.to_bytes(),
+                        Some(public_key.as_bytes()),
+                        "1".to_string(),
+                    )
+                    .unwrap(),
+                    &mut object,
+                    &room_version,
+                )
+                .unwrap();
 
-        Ok(send_state_event::v3::Response::new(response.event_id))
+                info!("Signed event with public key: {:?}", public_key.to_base64());
+                let signed_event =
+                    Raw::from_json_string(serde_json::to_string(&object).unwrap()).unwrap();
+
+                let request =
+                    send_pdus::unstable::Request::new(room_version, None, None, vec![signed_event]);
+                self.client.send(request, None).await?;
+
+                Ok(send_state_event::v3::Response::new(response.event_id))
+            }
+            None => {
+                tracing::error!("Failed getting pseudoid for room");
+                Err(Error::Pseudoid)
+            }
+        }
     }
 
     /// Send a raw room state event to the homeserver.

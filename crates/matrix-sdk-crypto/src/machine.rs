@@ -1998,6 +1998,15 @@ impl OlmMachine {
         self.inner.account.inner.associate_pseudoid_with_room(room, key).await
     }
 
+    /// Claims a one-time pseudoid for this room.
+    pub async fn claim_one_time_pseudoid_for_room(
+        &self,
+        room: &str,
+        key: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.inner.account.inner.claim_one_time_pseudoid_for_room(room, key).await
+    }
+
     /// Creates a new pseudoid.
     pub async fn create_pseudoid(&self) -> Ed25519SecretKey {
         self.inner.account.inner.create_pseudoid().await
