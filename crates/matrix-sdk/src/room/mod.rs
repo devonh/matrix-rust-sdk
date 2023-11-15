@@ -160,8 +160,10 @@ impl Room {
                 let signed_event =
                     Raw::from_json_string(serde_json::to_string(&object).unwrap()).unwrap();
 
-                let request =
-                    send_pdus::unstable::Request::new(room_version, None, None, vec![signed_event]);
+                let request = send_pdus::unstable::Request::new(
+                    TransactionId::new(), // TODO: cryptoIDs - generate new txn_id
+                    vec![send_pdus::unstable::PDUInfo::new(None, room_version, signed_event)],
+                );
                 self.client.send(request, None).await?;
             }
             None => {
@@ -223,10 +225,12 @@ impl Room {
                     Raw::from_json_string(serde_json::to_string(&object).unwrap()).unwrap();
 
                 let request = send_pdus::unstable::Request::new(
-                    response.room_version,
-                    response.via_server,
-                    None,
-                    vec![signed_event],
+                    TransactionId::new(), // TODO: cryptoIDs - generate new txn_id
+                    vec![send_pdus::unstable::PDUInfo::new(
+                        response.via_server,
+                        response.room_version,
+                        signed_event,
+                    )],
                 );
                 self.client.send(request, None).await?;
             }
@@ -1124,8 +1128,10 @@ impl Room {
                 let signed_event =
                     Raw::from_json_string(serde_json::to_string(&object).unwrap()).unwrap();
 
-                let request =
-                    send_pdus::unstable::Request::new(room_version, None, None, vec![signed_event]);
+                let request = send_pdus::unstable::Request::new(
+                    TransactionId::new(), // TODO: cryptoIDs - generate new txn_id
+                    vec![send_pdus::unstable::PDUInfo::new(None, room_version, signed_event)],
+                );
                 self.client.send(request, None).await?;
 
                 Ok(())
@@ -1728,8 +1734,10 @@ impl Room {
                 let signed_event =
                     Raw::from_json_string(serde_json::to_string(&object).unwrap()).unwrap();
 
-                let request =
-                    send_pdus::unstable::Request::new(room_version, None, None, vec![signed_event]);
+                let request = send_pdus::unstable::Request::new(
+                    TransactionId::new(), // TODO: cryptoIDs - generate new txn_id
+                    vec![send_pdus::unstable::PDUInfo::new(None, room_version, signed_event)],
+                );
                 self.client.send(request, None).await?;
 
                 Ok(send_message_event::v3::Response::new(response.event_id))
@@ -2102,8 +2110,10 @@ impl Room {
                 let signed_event =
                     Raw::from_json_string(serde_json::to_string(&object).unwrap()).unwrap();
 
-                let request =
-                    send_pdus::unstable::Request::new(room_version, None, None, vec![signed_event]);
+                let request = send_pdus::unstable::Request::new(
+                    TransactionId::new(), // TODO: cryptoIDs - generate new txn_id
+                    vec![send_pdus::unstable::PDUInfo::new(None, room_version, signed_event)],
+                );
                 self.client.send(request, None).await?;
 
                 Ok(send_state_event::v3::Response::new(response.event_id))

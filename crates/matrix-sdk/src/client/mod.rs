@@ -65,7 +65,7 @@ use ruma::{
     serde::Raw,
     signatures::Ed25519KeyPair,
     DeviceId, OwnedDeviceId, OwnedRoomId, OwnedServerName, RoomAliasId, RoomId, RoomOrAliasId,
-    ServerName, UInt, UserId,
+    ServerName, TransactionId, UInt, UserId,
 };
 use serde::de::DeserializeOwned;
 use tokio::sync::{broadcast, Mutex, OnceCell, RwLock, RwLockReadGuard};
@@ -995,10 +995,12 @@ impl Client {
 
         // Send join event
         let request = send_pdus::unstable::Request::new(
-            response.room_version,
-            response.via_server,
-            None,
-            vec![response.pdu],
+            TransactionId::new(), // TODO: cryptoIDs - generate new txn_id
+            vec![send_pdus::unstable::PDUInfo::new(
+                response.via_server,
+                response.room_version,
+                response.pdu,
+            )],
         );
 
         self.send(request, None).await?;
@@ -1029,10 +1031,12 @@ impl Client {
 
         // Send join event
         let request = send_pdus::unstable::Request::new(
-            response.room_version,
-            response.via_server,
-            None,
-            vec![response.pdu],
+            TransactionId::new(), // TODO: cryptoIDs - generate new txn_id
+            vec![send_pdus::unstable::PDUInfo::new(
+                response.via_server,
+                response.room_version,
+                response.pdu,
+            )],
         );
 
         self.send(request, None).await?;
@@ -1156,7 +1160,15 @@ impl Client {
             .collect();
 
         // Send createRoom events
-        let request = send_pdus::unstable::Request::new(response.room_version, None, None, pdus);
+        let pdu_infos: Vec<send_pdus::unstable::PDUInfo> = pdus
+            .into_iter()
+            .map(|pdu| send_pdus::unstable::PDUInfo::new(None, response.room_version.clone(), pdu))
+            .collect();
+
+        let request = send_pdus::unstable::Request::new(
+            TransactionId::new(), // TODO: cryptoIDs - generate new txn_id
+            pdu_infos,
+        );
         self.send(request, None).await?;
 
         let base_room = self.base_client().get_or_create_room(&room_id, RoomState::Joined);
