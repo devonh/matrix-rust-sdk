@@ -268,9 +268,9 @@ pub enum Error {
     #[error(transparent)]
     Oidc(#[from] crate::oidc::OidcError),
 
-    /// An error occurred interacting with the OpenID Connect API.
-    #[error("Pseudo ID error occurred")]
-    Pseudoid,
+    /// An error occurred with the cryptoid.
+    #[error("CryptoID error occurred")]
+    Cryptoid,
 
     /// An other error was raised
     /// this might happen because encryption was enabled on the base-crate

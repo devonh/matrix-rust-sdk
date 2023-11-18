@@ -160,7 +160,7 @@ pub static KEYS_UPLOAD: Lazy<JsonValue> = Lazy::new(|| {
         "curve25519": 10,
         "signed_curve25519": 20
       },
-      "one_time_pseudoid_counts": {
+      "one_time_cryptoid_counts": {
         "signed_curve25519": 10
       }
     })

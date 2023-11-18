@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! High-level PseudoID API.
+//! High-level CryptoID API.
 //!
-//! Provides an abstraction over the pseudoIDs managed by the olm machine.
+//! Provides an abstraction over the cryptoIDs managed by the olm machine.
 
 #![cfg_attr(target_arch = "wasm32", allow(unused_imports))]
 
@@ -27,42 +27,42 @@ impl Client {}
 #[cfg(any(feature = "testing", test))]
 impl Client {}
 
-/// A high-level API to manage the client's pseudoids.
+/// A high-level API to manage the client's cryptoids.
 ///
-/// To get this, use [`Client::pseudoids()`].
+/// To get this, use [`Client::cryptoids()`].
 #[derive(Debug, Clone)]
-pub struct PseudoIDs {
+pub struct CryptoIDs {
     /// The underlying client.
     client: Client,
 }
 
-impl PseudoIDs {
+impl CryptoIDs {
     pub(crate) fn new(client: Client) -> Self {
         Self { client }
     }
 
-    /// Creates a new pseudoid.
-    pub async fn create_pseudoid(&self) -> Result<Ed25519SecretKey, Error> {
+    /// Creates a new cryptoid.
+    pub async fn create_cryptoid(&self) -> Result<Ed25519SecretKey, Error> {
         let olm = self.client.olm_machine().await;
         let machine = olm.as_ref().ok_or(Error::NoOlmMachine)?;
-        Ok(machine.create_pseudoid().await)
+        Ok(machine.create_cryptoid().await)
     }
 
-    /// Associates a pseudoid with the given room.
-    pub async fn associate_pseudoid_with_room(
+    /// Associates a cryptoid with the given room.
+    pub async fn associate_cryptoid_with_room(
         &self,
         room: &str,
         key: &Ed25519SecretKey,
     ) -> Result<(), Error> {
         let olm = self.client.olm_machine().await;
         let machine = olm.as_ref().ok_or(Error::NoOlmMachine)?;
-        Ok(machine.associate_pseudoid_with_room(room, key).await)
+        Ok(machine.associate_cryptoid_with_room(room, key).await)
     }
 
-    /// Gets the existing pseudoid for a room if one exists.
-    pub async fn get_pseudoid_for_room(&self, room: &str) -> Option<Ed25519SecretKey> {
+    /// Gets the existing cryptoid for a room if one exists.
+    pub async fn get_cryptoid_for_room(&self, room: &str) -> Option<Ed25519SecretKey> {
         let olm = self.client.olm_machine().await;
         let machine = olm.as_ref()?;
-        machine.get_pseudoid_for_room(room).await
+        machine.get_cryptoid_for_room(room).await
     }
 }

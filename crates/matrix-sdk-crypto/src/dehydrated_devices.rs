@@ -225,7 +225,7 @@ impl RehydratedDevice {
             to_device_events: events,
             next_batch_token: None,
             one_time_keys_counts: &Default::default(),
-            one_time_pseudoids_counts: &Default::default(),
+            one_time_cryptoids_counts: &Default::default(),
             changed_devices: &Default::default(),
             unused_fallback_keys: None,
         };

@@ -305,7 +305,7 @@ impl Client {
         debug!(
             device_keys = request.device_keys.is_some(),
             one_time_key_count = request.one_time_keys.len(),
-            one_time_pseudoid_count = request.one_time_pseudoids.len(),
+            one_time_cryptoid_count = request.one_time_cryptoids.len(),
             "Uploading public encryption keys",
         );
 

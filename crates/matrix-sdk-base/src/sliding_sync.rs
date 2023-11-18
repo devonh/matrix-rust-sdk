@@ -66,7 +66,7 @@ impl BaseClient {
         trace!(
             to_device_events = to_device_events.len(),
             device_one_time_keys_count = e2ee.device_one_time_keys_count.len(),
-            one_time_pseudoids_count = e2ee.one_time_pseudoids_count.len(),
+            one_time_cryptoids_count = e2ee.one_time_cryptoids_count.len(),
             device_unused_fallback_key_types =
                 e2ee.device_unused_fallback_key_types.as_ref().map(|v| v.len()),
             "Processing sliding sync e2ee events",
@@ -86,7 +86,7 @@ impl BaseClient {
                     to_device_events,
                     changed_devices: &e2ee.device_lists,
                     one_time_keys_counts: &e2ee.device_one_time_keys_count,
-                    one_time_pseudoids_counts: &e2ee.one_time_pseudoids_count,
+                    one_time_cryptoids_counts: &e2ee.one_time_cryptoids_count,
                     unused_fallback_keys: e2ee.device_unused_fallback_key_types.as_deref(),
                     next_batch_token: to_device
                         .as_ref()
@@ -359,7 +359,7 @@ impl BaseClient {
     ) -> (Room, RoomInfo, Option<InvitedRoom>) {
         if let Some(invite_state) = &room_data.invite_state {
             // TODO: cryptoIDs - is this the invite we're talking about?
-            // if so, process & store the one-time pseudoid here?
+            // if so, process & store the one-time cryptoid here?
             warn!("Received sliding sync invite for {:?}", room_id);
             let room = store.get_or_create_room(room_id, RoomState::Invited);
             let mut room_info = room.clone_info();
@@ -379,21 +379,21 @@ impl BaseClient {
 
             self.handle_invited_state(invite_state.as_slice(), &mut room_info, changes);
 
-            if let Some(pseudoid) = &room_data.pseudoid {
-                info!("Got pseudoid with invite: {:?}", pseudoid);
+            if let Some(cryptoid) = &room_data.cryptoid {
+                info!("Got cryptoid with invite: {:?}", cryptoid);
                 if let Some(o) = self.olm_machine().await.as_ref() {
                     if let Err(e) =
-                        o.claim_one_time_pseudoid_for_room(&room_id.as_str(), pseudoid).await
+                        o.claim_one_time_cryptoid_for_room(&room_id.as_str(), cryptoid).await
                     {
                         tracing::error!(
-                            "Failed claiming one-time pseudoid for room: {} {:?}",
+                            "Failed claiming one-time cryptoid for room: {} {:?}",
                             room_id.as_str(),
                             e
                         );
                     }
                 }
             } else {
-                tracing::error!("Got no pseudoid with invite");
+                tracing::error!("Got no cryptoid with invite");
             }
 
             (
@@ -418,21 +418,21 @@ impl BaseClient {
             // looking for relevant membership events.
             self.handle_own_room_membership(state_events, &mut room_info);
 
-            if let Some(pseudoid) = &room_data.pseudoid {
-                info!("Got pseudoid with invite: {:?}", pseudoid);
+            if let Some(cryptoid) = &room_data.cryptoid {
+                info!("Got cryptoid with invite: {:?}", cryptoid);
                 if let Some(o) = self.olm_machine().await.as_ref() {
                     if let Err(e) =
-                        o.claim_one_time_pseudoid_for_room(&room_id.as_str(), pseudoid).await
+                        o.claim_one_time_cryptoid_for_room(&room_id.as_str(), cryptoid).await
                     {
                         tracing::error!(
-                            "Failed claiming one-time pseudoid for room: {} {:?}",
+                            "Failed claiming one-time cryptoid for room: {} {:?}",
                             room_id.as_str(),
                             e
                         );
                     }
                 }
             } else {
-                tracing::error!("Got no pseudoid with invite");
+                tracing::error!("Got no cryptoid with invite");
             }
 
             (room, room_info, None)

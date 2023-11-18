@@ -34,6 +34,7 @@ pub mod attachment;
 mod authentication;
 mod client;
 pub mod config;
+pub mod cryptoids;
 #[cfg(feature = "e2e-encryption")]
 pub mod encryption;
 mod error;
@@ -44,7 +45,6 @@ pub mod media;
 pub mod notification_settings;
 #[cfg(feature = "experimental-oidc")]
 pub mod oidc;
-pub mod pseudoids;
 pub mod room;
 
 #[cfg(feature = "experimental-sliding-sync")]

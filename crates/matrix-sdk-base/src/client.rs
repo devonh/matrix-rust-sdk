@@ -721,7 +721,7 @@ impl BaseClient {
                     to_device_events: response.to_device.events,
                     changed_devices: &response.device_lists,
                     one_time_keys_counts: &response.device_one_time_keys_count,
-                    one_time_pseudoids_counts: &Default::default(),
+                    one_time_cryptoids_counts: &Default::default(),
                     unused_fallback_keys: response.device_unused_fallback_key_types.as_deref(),
                     next_batch_token: Some(response.next_batch.clone()),
                 },

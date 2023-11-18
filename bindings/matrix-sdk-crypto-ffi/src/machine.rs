@@ -519,7 +519,7 @@ impl OlmMachine {
         events: String,
         device_changes: DeviceLists,
         key_counts: HashMap<String, i32>,
-        pseudoid_counts: HashMap<String, i32>,
+        cryptoid_counts: HashMap<String, i32>,
         unused_fallback_keys: Option<Vec<String>>,
         next_batch_token: String,
     ) -> Result<SyncChangesResult, CryptoStoreError> {
@@ -536,14 +536,14 @@ impl OlmMachine {
                 )
             })
             .collect();
-        let pseudoid_counts: BTreeMap<DeviceKeyAlgorithm, UInt> = pseudoid_counts
+        let cryptoid_counts: BTreeMap<DeviceKeyAlgorithm, UInt> = cryptoid_counts
             .into_iter()
             .map(|(k, v)| {
                 (
                     DeviceKeyAlgorithm::from(k),
                     v.clamp(0, i32::MAX)
                         .try_into()
-                        .expect("Couldn't convert pseudoid counts into an UInt"),
+                        .expect("Couldn't convert cryptoid counts into an UInt"),
                 )
             })
             .collect();
@@ -556,7 +556,7 @@ impl OlmMachine {
                 to_device_events: to_device.events,
                 changed_devices: &device_changes,
                 one_time_keys_counts: &key_counts,
-                one_time_pseudoids_counts: &pseudoid_counts,
+                one_time_cryptoids_counts: &cryptoid_counts,
                 unused_fallback_keys: unused_fallback_keys.as_deref(),
                 next_batch_token: Some(next_batch_token),
             }),

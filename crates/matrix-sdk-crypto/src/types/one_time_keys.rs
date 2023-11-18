@@ -32,8 +32,8 @@ use super::{
 
 /// A key for the SignedCurve25519 algorithm
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct UnsignedPseudoID {
-    /// The Ed25519 key that can be used as a pseudoid.
+pub struct UnsignedCryptoID {
+    /// The Ed25519 key that can be used as a cryptoid.
     #[serde(
         deserialize_with = "deserialize_ed25519_key",
         serialize_with = "serialize_ed25519_key"
@@ -41,8 +41,8 @@ pub struct UnsignedPseudoID {
     key: Ed25519PublicKey,
 }
 
-impl UnsignedPseudoID {
-    /// Creates a new `UnsignedPseudoID` with the given key and signatures.
+impl UnsignedCryptoID {
+    /// Creates a new `UnsignedCryptoID` with the given key and signatures.
     pub fn new(key: Ed25519PublicKey) -> Self {
         Self { key }
     }
@@ -52,10 +52,10 @@ impl UnsignedPseudoID {
         self.key
     }
 
-    /// Serialize the one-time pseudoid into a Raw version.
+    /// Serialize the one-time cryptoid into a Raw version.
     pub fn into_raw<T>(self) -> Raw<T> {
         let key = OneTimeKey::UnsignedKey(self);
-        Raw::from_json(to_raw_value(&key).expect("Coulnd't serialize one-time key"))
+        Raw::from_json(to_raw_value(&key).expect("Coulnd't serialize one-time cryptoid"))
     }
 }
 
@@ -141,7 +141,7 @@ pub enum OneTimeKey {
     Key(Curve25519PublicKey),
 
     /// An unsigned Ed25519 one-time key.
-    UnsignedKey(UnsignedPseudoID),
+    UnsignedKey(UnsignedCryptoID),
 
     /// An unknown one-time key type.
     Unknown(Value),

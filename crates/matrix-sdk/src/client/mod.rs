@@ -89,7 +89,7 @@ use crate::{
     TransmissionProgress,
 };
 #[cfg(feature = "e2e-encryption")]
-use crate::{encryption::Encryption, pseudoids::PseudoIDs, store_locks::CrossProcessStoreLock};
+use crate::{cryptoids::CryptoIDs, encryption::Encryption, store_locks::CrossProcessStoreLock};
 
 mod builder;
 mod futures;
@@ -457,9 +457,9 @@ impl Client {
         Encryption::new(self.clone())
     }
 
-    /// Get the pseudoid manager of the client.
-    pub fn pseudoids(&self) -> PseudoIDs {
-        PseudoIDs::new(self.clone())
+    /// Get the cryptoid manager of the client.
+    pub fn cryptoids(&self) -> CryptoIDs {
+        CryptoIDs::new(self.clone())
     }
 
     /// Get the media manager of the client.
@@ -1126,25 +1126,25 @@ impl Client {
         let invite = request.invite.clone();
         let is_direct_room = request.is_direct;
 
-        let pseudoid = self.pseudoids().create_pseudoid().await?;
-        request.sender_id = pseudoid.public_key().to_base64();
+        let cryptoid = self.cryptoids().create_cryptoid().await?;
+        request.sender_id = cryptoid.public_key().to_base64();
 
         // Make createRoom events
         let response = self.send(request, None).await?;
         let room_id = response.room_id;
-        self.pseudoids().associate_pseudoid_with_room(room_id.as_str(), &pseudoid).await?;
+        self.cryptoids().associate_cryptoid_with_room(room_id.as_str(), &cryptoid).await?;
 
         let pdus: Vec<Raw<AnyTimelineEvent>> = response
             .pdus
             .into_iter()
             .map(|pdu| {
                 let mut object = serde_json::from_str(pdu.json().get()).unwrap();
-                let public_key = pseudoid.public_key().clone();
+                let public_key = cryptoid.public_key().clone();
                 ruma::signatures::hash_and_sign_event(
                     &public_key.to_base64(),
                     &Ed25519KeyPair::new(
                         ed25519_dalek::pkcs8::ALGORITHM_OID,
-                        &*pseudoid.to_bytes(),
+                        &*cryptoid.to_bytes(),
                         Some(public_key.as_bytes()),
                         "1".to_string(),
                     )

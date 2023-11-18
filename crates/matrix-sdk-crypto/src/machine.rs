@@ -633,20 +633,20 @@ impl OlmMachine {
     ///
     /// [`receive_keys_upload_response`]: #method.receive_keys_upload_response
     async fn keys_for_upload(&self) -> Option<upload_keys::unstable::Request> {
-        let (device_keys, one_time_keys, fallback_keys, one_time_pseudoids) =
+        let (device_keys, one_time_keys, fallback_keys, one_time_cryptoids) =
             self.inner.account.keys_for_upload().await;
 
         if device_keys.is_none()
             && one_time_keys.is_empty()
             && fallback_keys.is_empty()
-            && one_time_pseudoids.is_empty()
+            && one_time_cryptoids.is_empty()
         {
             None
         } else {
             let device_keys = device_keys.map(|d| d.to_raw());
 
             Some(assign!(upload_keys::unstable::Request::new(), {
-                device_keys, one_time_keys, one_time_pseudoids, fallback_keys
+                device_keys, one_time_keys, one_time_cryptoids, fallback_keys
             }))
         }
     }
@@ -994,11 +994,11 @@ impl OlmMachine {
         self.inner.account.update_key_counts(one_time_key_count, unused_fallback_keys).await;
     }
 
-    async fn update_pseudoid_counts(
+    async fn update_cryptoid_counts(
         &self,
-        one_time_pseudoid_count: &BTreeMap<DeviceKeyAlgorithm, UInt>,
+        one_time_cryptoid_count: &BTreeMap<DeviceKeyAlgorithm, UInt>,
     ) {
-        self.inner.account.update_pseudoid_counts(one_time_pseudoid_count).await;
+        self.inner.account.update_cryptoid_counts(one_time_cryptoid_count).await;
     }
 
     async fn handle_to_device_event(&self, changes: &mut Changes, event: &ToDeviceEvents) {
@@ -1189,7 +1189,7 @@ impl OlmMachine {
         )
         .await;
 
-        self.update_pseudoid_counts(sync_changes.one_time_pseudoids_counts).await;
+        self.update_cryptoid_counts(sync_changes.one_time_cryptoids_counts).await;
 
         if let Err(e) = self
             .inner
@@ -1988,28 +1988,28 @@ impl OlmMachine {
         self.inner.account.uploaded_key_count()
     }
 
-    /// Gets the existing pseudoid for a room if one exists.
-    pub async fn get_pseudoid_for_room(&self, room: &str) -> Option<Ed25519SecretKey> {
-        self.inner.account.inner.get_pseudoid_for_room(room).await
+    /// Gets the existing cryptoid for a room if one exists.
+    pub async fn get_cryptoid_for_room(&self, room: &str) -> Option<Ed25519SecretKey> {
+        self.inner.account.inner.get_cryptoid_for_room(room).await
     }
 
-    /// Associates a pseudoid with this room.
-    pub async fn associate_pseudoid_with_room(&self, room: &str, key: &Ed25519SecretKey) {
-        self.inner.account.inner.associate_pseudoid_with_room(room, key).await
+    /// Associates a cryptoid with this room.
+    pub async fn associate_cryptoid_with_room(&self, room: &str, key: &Ed25519SecretKey) {
+        self.inner.account.inner.associate_cryptoid_with_room(room, key).await
     }
 
-    /// Claims a one-time pseudoid for this room.
-    pub async fn claim_one_time_pseudoid_for_room(
+    /// Claims a one-time cryptoid for this room.
+    pub async fn claim_one_time_cryptoid_for_room(
         &self,
         room: &str,
         key: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        self.inner.account.inner.claim_one_time_pseudoid_for_room(room, key).await
+        self.inner.account.inner.claim_one_time_cryptoid_for_room(room, key).await
     }
 
-    /// Creates a new pseudoid.
-    pub async fn create_pseudoid(&self) -> Ed25519SecretKey {
-        self.inner.account.inner.create_pseudoid().await
+    /// Creates a new cryptoid.
+    pub async fn create_cryptoid(&self) -> Ed25519SecretKey {
+        self.inner.account.inner.create_cryptoid().await
     }
 }
 
@@ -2023,8 +2023,8 @@ pub struct EncryptionSyncChanges<'a> {
     pub changed_devices: &'a DeviceLists,
     /// The number of one time keys.
     pub one_time_keys_counts: &'a BTreeMap<DeviceKeyAlgorithm, UInt>,
-    /// The number of one time pseudoids.
-    pub one_time_pseudoids_counts: &'a BTreeMap<DeviceKeyAlgorithm, UInt>,
+    /// The number of one time cryptoids.
+    pub one_time_cryptoids_counts: &'a BTreeMap<DeviceKeyAlgorithm, UInt>,
     /// An optional list of fallback keys.
     pub unused_fallback_keys: Option<&'a [DeviceKeyAlgorithm]>,
     /// A next-batch token obtained from a to-device sync query.
@@ -2068,7 +2068,7 @@ pub(crate) mod tests {
             IncomingResponse,
         },
         device_id,
-        encryption::{OneTimeKey, OneTimePseudoID},
+        encryption::{OneTimeCryptoID, OneTimeKey},
         events::{
             dummy::ToDeviceDummyEventContent,
             key::verification::VerificationMethod,
@@ -2109,7 +2109,7 @@ pub(crate) mod tests {
 
     /// These keys need to be periodically uploaded to the server.
     type OneTimeKeys = BTreeMap<OwnedDeviceKeyId, Raw<OneTimeKey>>;
-    type OneTimePseudoIDs = BTreeMap<OwnedDeviceKeyId, Raw<OneTimePseudoID>>;
+    type OneTimeCryptoIDs = BTreeMap<OwnedDeviceKeyId, Raw<OneTimeCryptoID>>;
 
     fn alice_id() -> &'static UserId {
         user_id!("@alice:example.org")
@@ -2159,24 +2159,24 @@ pub(crate) mod tests {
     pub(crate) async fn get_prepared_machine(
         user_id: &UserId,
         use_fallback_key: bool,
-    ) -> (OlmMachine, OneTimeKeys, OneTimePseudoIDs) {
+    ) -> (OlmMachine, OneTimeKeys, OneTimeCryptoIDs) {
         let machine = OlmMachine::new(user_id, bob_device_id()).await;
         machine.account().generate_fallback_key_helper().await;
         machine.account().update_uploaded_key_count(0);
-        machine.account().update_uploaded_pseudoid_count(0);
+        machine.account().update_uploaded_cryptoid_count(0);
         machine.account().generate_one_time_keys().await;
-        machine.account().generate_one_time_pseudoids().await;
+        machine.account().generate_one_time_cryptoids().await;
         let request = machine.keys_for_upload().await.expect("Can't prepare initial key upload");
         let response = keys_upload_response();
         machine.receive_keys_upload_response(&response).await.unwrap();
 
         let keys = if use_fallback_key { request.fallback_keys } else { request.one_time_keys };
-        let pseudoids = request.one_time_pseudoids;
+        let cryptoids = request.one_time_cryptoids;
 
-        (machine, keys, pseudoids)
+        (machine, keys, cryptoids)
     }
 
-    async fn get_machine_after_query() -> (OlmMachine, OneTimeKeys, OneTimePseudoIDs) {
+    async fn get_machine_after_query() -> (OlmMachine, OneTimeKeys, OneTimeCryptoIDs) {
         let (machine, otk, otp) = get_prepared_machine(user_id(), false).await;
         let response = keys_query_response();
         let req_id = TransactionId::new();
@@ -2190,7 +2190,7 @@ pub(crate) mod tests {
         alice: &UserId,
         bob: &UserId,
         use_fallback_key: bool,
-    ) -> (OlmMachine, OlmMachine, OneTimeKeys, OneTimePseudoIDs) {
+    ) -> (OlmMachine, OlmMachine, OneTimeKeys, OneTimeCryptoIDs) {
         let (bob, otk, otp) = get_prepared_machine(bob, use_fallback_key).await;
 
         let alice_device = alice_device_id();
@@ -2284,19 +2284,19 @@ pub(crate) mod tests {
     }
 
     #[async_test]
-    async fn generate_one_time_pseudoids() {
+    async fn generate_one_time_cryptoids() {
         let machine = OlmMachine::new(user_id(), alice_device_id()).await;
 
-        assert!(machine.account().generate_one_time_pseudoids().await.is_some());
+        assert!(machine.account().generate_one_time_cryptoids().await.is_some());
 
         let mut response = keys_upload_response();
 
         machine.receive_keys_upload_response(&response).await.unwrap();
-        assert!(machine.account().generate_one_time_pseudoids().await.is_some());
+        assert!(machine.account().generate_one_time_cryptoids().await.is_some());
 
-        response.one_time_pseudoid_counts.insert(DeviceKeyAlgorithm::SignedCurve25519, uint!(50));
+        response.one_time_cryptoid_counts.insert(DeviceKeyAlgorithm::SignedCurve25519, uint!(50));
         machine.receive_keys_upload_response(&response).await.unwrap();
-        assert!(machine.account().generate_one_time_pseudoids().await.is_none());
+        assert!(machine.account().generate_one_time_cryptoids().await.is_none());
     }
 
     #[async_test]
@@ -2378,13 +2378,13 @@ pub(crate) mod tests {
     async fn test_keys_for_upload() {
         let machine = OlmMachine::new(user_id(), alice_device_id()).await;
         let key_counts = BTreeMap::from([(DeviceKeyAlgorithm::SignedCurve25519, 49u8.into())]);
-        let pseudoid_counts = BTreeMap::from([(DeviceKeyAlgorithm::SignedCurve25519, 49u8.into())]);
+        let cryptoid_counts = BTreeMap::from([(DeviceKeyAlgorithm::SignedCurve25519, 49u8.into())]);
         machine
             .receive_sync_changes(EncryptionSyncChanges {
                 to_device_events: Vec::new(),
                 changed_devices: &Default::default(),
                 one_time_keys_counts: &key_counts,
-                one_time_pseudoids_counts: &pseudoid_counts,
+                one_time_cryptoids_counts: &cryptoid_counts,
                 unused_fallback_keys: None,
                 next_batch_token: None,
             })
@@ -2661,7 +2661,7 @@ pub(crate) mod tests {
                 to_device_events: vec![event],
                 changed_devices: &Default::default(),
                 one_time_keys_counts: &Default::default(),
-                one_time_pseudoids_counts: &Default::default(),
+                one_time_cryptoids_counts: &Default::default(),
                 unused_fallback_keys: None,
                 next_batch_token: None,
             })
@@ -2802,7 +2802,7 @@ pub(crate) mod tests {
             to_device_events: vec![event],
             changed_devices: &Default::default(),
             one_time_keys_counts: &Default::default(),
-            one_time_pseudoids_counts: &Default::default(),
+            one_time_cryptoids_counts: &Default::default(),
             unused_fallback_keys: None,
             next_batch_token: None,
         })
@@ -3602,14 +3602,14 @@ pub(crate) mod tests {
         let event = json_convert(&event).unwrap();
         let changed_devices = DeviceLists::new();
         let key_counts: BTreeMap<_, _> = Default::default();
-        let pseudoid_counts: BTreeMap<_, _> = Default::default();
+        let cryptoid_counts: BTreeMap<_, _> = Default::default();
 
         let _ = bob
             .receive_sync_changes(EncryptionSyncChanges {
                 to_device_events: vec![event],
                 changed_devices: &changed_devices,
                 one_time_keys_counts: &key_counts,
-                one_time_pseudoids_counts: &pseudoid_counts,
+                one_time_cryptoids_counts: &cryptoid_counts,
                 unused_fallback_keys: None,
                 next_batch_token: None,
             })
@@ -3649,7 +3649,7 @@ pub(crate) mod tests {
             to_device_events: vec![event],
             changed_devices: &changed_devices,
             one_time_keys_counts: &key_counts,
-            one_time_pseudoids_counts: &pseudoid_counts,
+            one_time_cryptoids_counts: &cryptoid_counts,
             unused_fallback_keys: None,
             next_batch_token: None,
         })

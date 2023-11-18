@@ -115,8 +115,8 @@ pub struct PickledAccount {
     pub shared: bool,
     /// The number of uploaded one-time keys we have on the server.
     pub uploaded_signed_key_count: i64,
-    /// The number of uploaded one-time pseudoids we have on the server.
-    pub uploaded_signed_pseudoid_count: i64,
+    /// The number of uploaded one-time cryptoids we have on the server.
+    pub uploaded_signed_cryptoid_count: i64,
 }
 
 /// A pickled version of a `Session`.
@@ -248,7 +248,7 @@ async fn migrate_data(
         pickle,
         shared: data.account.shared,
         uploaded_signed_key_count: data.account.uploaded_signed_key_count as u64,
-        uploaded_signed_pseudoid_count: data.account.uploaded_signed_pseudoid_count as u64,
+        uploaded_signed_cryptoid_count: data.account.uploaded_signed_cryptoid_count as u64,
         creation_local_time: MilliSecondsSinceUnixEpoch(UInt::default()),
     };
     let account = matrix_sdk_crypto::olm::ReadOnlyAccount::from_pickle(pickled_account)?;

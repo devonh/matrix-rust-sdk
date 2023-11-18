@@ -136,17 +136,17 @@ impl Room {
         let response = self.client.send(request, None).await?;
 
         // Send leave event
-        match self.client.pseudoids().get_pseudoid_for_room(self.room_id().as_str()).await {
-            Some(pseudoid) => {
+        match self.client.cryptoids().get_cryptoid_for_room(self.room_id().as_str()).await {
+            Some(cryptoid) => {
                 // TODO: cryptoIDs - get the room version for this room in a better way
-                let room_version = RoomVersionId::try_from("org.matrix.msc4014").unwrap();
+                let room_version = RoomVersionId::try_from("org.matrix.msc4080").unwrap();
                 let mut object = serde_json::from_str(response.pdu.json().get()).unwrap();
-                let public_key = pseudoid.public_key().clone();
+                let public_key = cryptoid.public_key().clone();
                 ruma::signatures::hash_and_sign_event(
                     &public_key.to_base64(),
                     &Ed25519KeyPair::new(
                         ed25519_dalek::pkcs8::ALGORITHM_OID,
-                        &*pseudoid.to_bytes(),
+                        &*cryptoid.to_bytes(),
                         Some(public_key.as_bytes()),
                         "1".to_string(),
                     )
@@ -167,8 +167,8 @@ impl Room {
                 self.client.send(request, None).await?;
             }
             None => {
-                tracing::error!("Failed getting pseudoid for room");
-                return Err(Error::Pseudoid);
+                tracing::error!("Failed getting cryptoid for room");
+                return Err(Error::Cryptoid);
             }
         }
 
@@ -200,17 +200,17 @@ impl Room {
         let room_id = response.room_id;
 
         // Send join event
-        match self.client.pseudoids().get_pseudoid_for_room(self.room_id().as_str()).await {
-            Some(pseudoid) => {
+        match self.client.cryptoids().get_cryptoid_for_room(self.room_id().as_str()).await {
+            Some(cryptoid) => {
                 // TODO: cryptoIDs - get the room version for this room in a better way
-                let room_version = RoomVersionId::try_from("org.matrix.msc4014").unwrap();
+                let room_version = RoomVersionId::try_from("org.matrix.msc4080").unwrap();
                 let mut object = serde_json::from_str(response.pdu.json().get()).unwrap();
-                let public_key = pseudoid.public_key().clone();
+                let public_key = cryptoid.public_key().clone();
                 ruma::signatures::hash_and_sign_event(
                     &public_key.to_base64(),
                     &Ed25519KeyPair::new(
                         ed25519_dalek::pkcs8::ALGORITHM_OID,
-                        &*pseudoid.to_bytes(),
+                        &*cryptoid.to_bytes(),
                         Some(public_key.as_bytes()),
                         "1".to_string(),
                     )
@@ -235,8 +235,8 @@ impl Room {
                 self.client.send(request, None).await?;
             }
             None => {
-                tracing::error!("Failed getting pseudoid for room");
-                return Err(Error::Pseudoid);
+                tracing::error!("Failed getting cryptoid for room");
+                return Err(Error::Cryptoid);
             }
         }
 
@@ -1104,17 +1104,17 @@ impl Room {
         let request = invite_user::unstable::Request::new(self.room_id().to_owned(), recipient);
         let response = self.client.send(request, None).await?;
 
-        match self.client.pseudoids().get_pseudoid_for_room(self.room_id().as_str()).await {
-            Some(pseudoid) => {
+        match self.client.cryptoids().get_cryptoid_for_room(self.room_id().as_str()).await {
+            Some(cryptoid) => {
                 // TODO: cryptoIDs - get the room version for this room in a better way
-                let room_version = RoomVersionId::try_from("org.matrix.msc4014").unwrap();
+                let room_version = RoomVersionId::try_from("org.matrix.msc4080").unwrap();
                 let mut object = serde_json::from_str(response.pdu.json().get()).unwrap();
-                let public_key = pseudoid.public_key().clone();
+                let public_key = cryptoid.public_key().clone();
                 ruma::signatures::hash_and_sign_event(
                     &public_key.to_base64(),
                     &Ed25519KeyPair::new(
                         ed25519_dalek::pkcs8::ALGORITHM_OID,
-                        &*pseudoid.to_bytes(),
+                        &*cryptoid.to_bytes(),
                         Some(public_key.as_bytes()),
                         "1".to_string(),
                     )
@@ -1137,8 +1137,8 @@ impl Room {
                 Ok(())
             }
             None => {
-                tracing::error!("Failed getting pseudoid for room");
-                Err(Error::Pseudoid)
+                tracing::error!("Failed getting cryptoid for room");
+                Err(Error::Cryptoid)
             }
         }
     }
@@ -1710,17 +1710,17 @@ impl Room {
         let response = response.unwrap();
 
         // Send event
-        match self.client.pseudoids().get_pseudoid_for_room(self.room_id().as_str()).await {
-            Some(pseudoid) => {
+        match self.client.cryptoids().get_cryptoid_for_room(self.room_id().as_str()).await {
+            Some(cryptoid) => {
                 // TODO: cryptoIDs - get the room version for this room in a better way
-                let room_version = RoomVersionId::try_from("org.matrix.msc4014").unwrap();
+                let room_version = RoomVersionId::try_from("org.matrix.msc4080").unwrap();
                 let mut object = serde_json::from_str(response.pdu.json().get()).unwrap();
-                let public_key = pseudoid.public_key().clone();
+                let public_key = cryptoid.public_key().clone();
                 ruma::signatures::hash_and_sign_event(
                     &public_key.to_base64(),
                     &Ed25519KeyPair::new(
                         ed25519_dalek::pkcs8::ALGORITHM_OID,
-                        &*pseudoid.to_bytes(),
+                        &*cryptoid.to_bytes(),
                         Some(public_key.as_bytes()),
                         "1".to_string(),
                     )
@@ -1743,8 +1743,8 @@ impl Room {
                 Ok(send_message_event::v3::Response::new(response.event_id))
             }
             None => {
-                tracing::error!("Failed getting pseudoid for room");
-                Err(Error::Pseudoid)
+                tracing::error!("Failed getting cryptoid for room");
+                Err(Error::Cryptoid)
             }
         }
     }
@@ -2086,17 +2086,17 @@ impl Room {
         let response = self.client.send(request, None).await?;
 
         // Send event
-        match self.client.pseudoids().get_pseudoid_for_room(self.room_id().as_str()).await {
-            Some(pseudoid) => {
+        match self.client.cryptoids().get_cryptoid_for_room(self.room_id().as_str()).await {
+            Some(cryptoid) => {
                 // TODO: cryptoIDs - get the room version for this room in a better way
-                let room_version = RoomVersionId::try_from("org.matrix.msc4014").unwrap();
+                let room_version = RoomVersionId::try_from("org.matrix.msc4080").unwrap();
                 let mut object = serde_json::from_str(response.pdu.json().get()).unwrap();
-                let public_key = pseudoid.public_key().clone();
+                let public_key = cryptoid.public_key().clone();
                 ruma::signatures::hash_and_sign_event(
                     &public_key.to_base64(),
                     &Ed25519KeyPair::new(
                         ed25519_dalek::pkcs8::ALGORITHM_OID,
-                        &*pseudoid.to_bytes(),
+                        &*cryptoid.to_bytes(),
                         Some(public_key.as_bytes()),
                         "1".to_string(),
                     )
@@ -2119,8 +2119,8 @@ impl Room {
                 Ok(send_state_event::v3::Response::new(response.event_id))
             }
             None => {
-                tracing::error!("Failed getting pseudoid for room");
-                Err(Error::Pseudoid)
+                tracing::error!("Failed getting cryptoid for room");
+                Err(Error::Cryptoid)
             }
         }
     }
