@@ -1127,7 +1127,7 @@ impl Client {
         let is_direct_room = request.is_direct;
 
         let cryptoid = self.cryptoids().create_cryptoid().await?;
-        request.sender_id = cryptoid.public_key().to_base64();
+        request.cryptoid = cryptoid.public_key().to_base64();
 
         // Make createRoom events
         let response = self.send(request, None).await?;
