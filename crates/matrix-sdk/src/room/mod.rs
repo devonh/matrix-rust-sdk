@@ -1067,11 +1067,50 @@ impl Room {
     /// * `reason` - The reason for banning this user.
     #[instrument(skip_all)]
     pub async fn ban_user(&self, user_id: &UserId, reason: Option<&str>) -> Result<()> {
+        // Make ban event
         let request = assign!(
-            ban_user::v3::Request::new(self.room_id().to_owned(), user_id.to_owned()),
+            ban_user::unstable::Request::new(self.room_id().to_owned(), user_id.to_owned()),
             { reason: reason.map(ToOwned::to_owned) }
         );
-        self.client.send(request, None).await?;
+        let response = self.client.send(request, None).await?;
+
+        // Send ban event
+        match self.client.cryptoids().get_cryptoid_for_room(self.room_id().as_str()).await {
+            Some(cryptoid) => {
+                // TODO: cryptoIDs - get the room version for this room in a better way
+                let room_version = RoomVersionId::try_from("org.matrix.msc4080").unwrap();
+                let mut object = serde_json::from_str(response.pdu.json().get()).unwrap();
+                let public_key = cryptoid.public_key().clone();
+                ruma::signatures::hash_and_sign_event(
+                    &public_key.to_base64(),
+                    &Ed25519KeyPair::new(
+                        ed25519_dalek::pkcs8::ALGORITHM_OID,
+                        &*cryptoid.to_bytes(),
+                        Some(public_key.as_bytes()),
+                        "1".to_string(),
+                    )
+                    .unwrap(),
+                    &mut object,
+                    &room_version,
+                )
+                .unwrap();
+
+                info!("Signed event with public key: {:?}", public_key.to_base64());
+                let signed_event =
+                    Raw::from_json_string(serde_json::to_string(&object).unwrap()).unwrap();
+
+                let request = send_pdus::unstable::Request::new(
+                    TransactionId::new(), // TODO: cryptoIDs - generate new txn_id
+                    vec![send_pdus::unstable::PDUInfo::new(None, room_version, signed_event)],
+                );
+                self.client.send(request, None).await?;
+            }
+            None => {
+                tracing::error!("Failed getting cryptoid for room");
+                return Err(Error::Cryptoid);
+            }
+        }
+
         Ok(())
     }
 
