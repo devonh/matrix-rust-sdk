@@ -990,12 +990,18 @@ impl Client {
     /// * `room_id` - The `RoomId` of the room to be joined.
     pub async fn join_room_by_id(&self, room_id: &RoomId) -> Result<Room> {
         // Make join event
-        let request = join_room_by_id::unstable::Request::new(room_id.to_owned());
+        let mut request = join_room_by_id::unstable::Request::new(room_id.to_owned());
+        let cryptoid = self
+            .cryptoids()
+            .get_cryptoid_for_room(room_id.as_str())
+            .await
+            .ok_or(Error::Cryptoid)?;
+        request.cryptoid = cryptoid.public_key().to_base64();
         let response = self.send(request, None).await?;
 
         // Send join event
         let request = send_pdus::unstable::Request::new(
-            TransactionId::new(), // TODO: cryptoIDs - generate new txn_id
+            TransactionId::new(),
             vec![send_pdus::unstable::PDUInfo::new(
                 response.via_server,
                 response.room_version,
@@ -1024,14 +1030,19 @@ impl Client {
         server_names: &[OwnedServerName],
     ) -> Result<Room> {
         // Make join event
-        let request = assign!(join_room_by_id_or_alias::unstable::Request::new(alias.to_owned()), {
+        let mut request = assign!(join_room_by_id_or_alias::unstable::Request::new(alias.to_owned()), {
             server_name: server_names.to_owned(),
         });
+        // TODO: cryptoIDs - is there a better way to handle id/alias tracking for
+        // cryptoIDs?
+        let cryptoid =
+            self.cryptoids().get_cryptoid_for_room(alias.as_str()).await.ok_or(Error::Cryptoid)?;
+        request.cryptoid = cryptoid.public_key().to_base64();
         let response = self.send(request, None).await?;
 
         // Send join event
         let request = send_pdus::unstable::Request::new(
-            TransactionId::new(), // TODO: cryptoIDs - generate new txn_id
+            TransactionId::new(),
             vec![send_pdus::unstable::PDUInfo::new(
                 response.via_server,
                 response.room_version,
