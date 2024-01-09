@@ -27,7 +27,7 @@ use std::{
     pin::Pin,
     result::Result as StdResult,
     str::Utf8Error,
-    sync::Arc,
+    sync::{Arc, RwLock as StdRwLock},
 };
 
 use once_cell::sync::OnceCell;
@@ -37,12 +37,10 @@ use once_cell::sync::OnceCell;
 pub mod integration_tests;
 mod traits;
 
-use dashmap::DashMap;
 #[cfg(feature = "e2e-encryption")]
 use matrix_sdk_crypto::store::{DynCryptoStore, IntoCryptoStore};
 pub use matrix_sdk_store_encryption::Error as StoreEncryptionError;
 use ruma::{
-    api::client::push::get_notifications::v3::Notification,
     events::{
         presence::PresenceEvent,
         receipt::ReceiptEventContent,
@@ -65,6 +63,7 @@ use crate::{
 
 pub(crate) mod ambiguity_map;
 mod memory_store;
+pub mod migration_helpers;
 
 #[cfg(any(test, feature = "testing"))]
 pub use self::integration_tests::StateStoreIntegrationTests;
@@ -143,7 +142,7 @@ pub(crate) struct Store {
     session_meta: Arc<OnceCell<SessionMeta>>,
     /// The current sync token that should be used for the next sync call.
     pub(super) sync_token: Arc<RwLock<Option<String>>>,
-    rooms: Arc<DashMap<OwnedRoomId, Room>>,
+    rooms: Arc<StdRwLock<BTreeMap<OwnedRoomId, Room>>>,
     /// A lock to synchronize access to the store, such that data by the sync is
     /// never overwritten. The sync processing is supposed to use write access,
     /// such that only it is currently accessing the store overall. Other things
@@ -178,7 +177,7 @@ impl Store {
     pub async fn set_session_meta(&self, session_meta: SessionMeta) -> Result<()> {
         for info in self.inner.get_room_infos().await? {
             let room = Room::restore(&session_meta.user_id, self.inner.clone(), info);
-            self.rooms.insert(room.room_id().to_owned(), room);
+            self.rooms.write().unwrap().insert(room.room_id().to_owned(), room);
         }
 
         let token =
@@ -197,21 +196,23 @@ impl Store {
 
     /// Get all the rooms this store knows about.
     pub fn get_rooms(&self) -> Vec<Room> {
-        self.rooms.iter().filter_map(|r| self.get_room(r.key())).collect()
+        self.rooms.read().unwrap().keys().filter_map(|id| self.get_room(id)).collect()
     }
 
     /// Get all the rooms this store knows about, filtered by state.
     pub fn get_rooms_filtered(&self, filter: RoomStateFilter) -> Vec<Room> {
         self.rooms
+            .read()
+            .unwrap()
             .iter()
-            .filter(|r| filter.matches(r.state()))
-            .filter_map(|r| self.get_room(r.key()))
+            .filter(|(_, r)| filter.matches(r.state()))
+            .filter_map(|(id, _)| self.get_room(id))
             .collect()
     }
 
     /// Get the room with the given room id.
     pub fn get_room(&self, room_id: &RoomId) -> Option<Room> {
-        self.rooms.get(room_id).map(|r| r.clone())
+        self.rooms.read().unwrap().get(room_id).cloned()
     }
 
     /// Lookup the Room for the given RoomId, or create one, if it didn't exist
@@ -221,6 +222,8 @@ impl Store {
             &self.session_meta.get().expect("Creating room while not being logged in").user_id;
 
         self.rooms
+            .write()
+            .unwrap()
             .entry(room_id.to_owned())
             .or_insert_with(|| Room::new(user_id, self.inner.clone(), room_id, room_type))
             .clone()
@@ -287,8 +290,6 @@ pub struct StateChanges {
     /// A map from room id to a map of a display name and a set of user ids that
     /// share that display name in the given room.
     pub ambiguity_maps: BTreeMap<OwnedRoomId, BTreeMap<String, BTreeSet<OwnedUserId>>>,
-    /// A map of `RoomId` to a vector of `Notification`s
-    pub notifications: BTreeMap<OwnedRoomId, Vec<Notification>>,
 }
 
 impl StateChanges {
@@ -373,12 +374,6 @@ impl StateChanges {
             .entry(room_id.to_owned())
             .or_default()
             .insert(redacted_event_id.to_owned(), redaction);
-    }
-
-    /// Update the `StateChanges` struct with the given room with a new
-    /// `Notification`.
-    pub fn add_notification(&mut self, room_id: &RoomId, notification: Notification) {
-        self.notifications.entry(room_id.to_owned()).or_default().push(notification);
     }
 
     /// Update the `StateChanges` struct with the given room with a new

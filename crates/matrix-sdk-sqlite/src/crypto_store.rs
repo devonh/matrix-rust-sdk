@@ -24,20 +24,23 @@ use async_trait::async_trait;
 use deadpool_sqlite::{Object as SqliteConn, Pool as SqlitePool, Runtime};
 use matrix_sdk_crypto::{
     olm::{
-        IdentityKeys, InboundGroupSession, OutboundGroupSession, PickledInboundGroupSession,
-        PrivateCrossSigningIdentity, Session,
+        InboundGroupSession, OutboundGroupSession, PickledInboundGroupSession,
+        PrivateCrossSigningIdentity, Session, StaticAccountData,
     },
-    store::{caches::SessionStore, BackupKeys, Changes, CryptoStore, RoomKeyCounts, RoomSettings},
+    store::{
+        caches::SessionStore, BackupKeys, Changes, CryptoStore, PendingChanges, RoomKeyCounts,
+        RoomSettings,
+    },
     types::events::room_key_withheld::RoomKeyWithheldEvent,
-    GossipRequest, GossippedSecret, ReadOnlyAccount, ReadOnlyDevice, ReadOnlyUserIdentities,
-    SecretInfo, TrackedUser,
+    Account, GossipRequest, GossippedSecret, ReadOnlyDevice, ReadOnlyUserIdentities, SecretInfo,
+    TrackedUser,
 };
 use matrix_sdk_store_encryption::StoreCipher;
 use ruma::{
     events::secret::request::SecretName, DeviceId, MilliSecondsSinceUnixEpoch, OwnedDeviceId,
-    OwnedUserId, RoomId, TransactionId, UserId,
+    RoomId, TransactionId, UserId,
 };
-use rusqlite::OptionalExtension;
+use rusqlite::{params_from_iter, OptionalExtension};
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::{fs, sync::Mutex};
 use tracing::{debug, instrument, warn};
@@ -46,17 +49,11 @@ use crate::{
     error::{Error, Result},
     get_or_create_store_cipher,
     utils::{
-        load_db_version, Key, SqliteConnectionExt as _, SqliteObjectExt, SqliteObjectStoreExt as _,
+        load_db_version, repeat_vars, Key, SqliteConnectionExt as _, SqliteObjectExt,
+        SqliteObjectStoreExt as _,
     },
     OpenStoreError,
 };
-
-#[derive(Clone, Debug)]
-pub struct AccountInfo {
-    user_id: OwnedUserId,
-    device_id: OwnedDeviceId,
-    identity_keys: Arc<IdentityKeys>,
-}
 
 /// A sqlite based cryptostore.
 #[derive(Clone)]
@@ -66,8 +63,9 @@ pub struct SqliteCryptoStore {
     pool: SqlitePool,
 
     // DB values cached in memory
-    account_info: Arc<RwLock<Option<AccountInfo>>>,
+    static_account: Arc<RwLock<Option<StaticAccountData>>>,
     session_cache: SessionStore,
+    save_changes_lock: Arc<Mutex<()>>,
 }
 
 #[cfg(not(tarpaulin_include))]
@@ -114,8 +112,9 @@ impl SqliteCryptoStore {
             store_cipher,
             path: None,
             pool,
-            account_info: Arc::new(RwLock::new(None)),
+            static_account: Arc::new(RwLock::new(None)),
             session_cache: SessionStore::new(),
+            save_changes_lock: Default::default(),
         })
     }
 
@@ -187,8 +186,8 @@ impl SqliteCryptoStore {
         }
     }
 
-    fn get_account_info(&self) -> Option<AccountInfo> {
-        self.account_info.read().unwrap().clone()
+    fn get_static_account(&self) -> Option<StaticAccountData> {
+        self.static_account.read().unwrap().clone()
     }
 
     async fn acquire(&self) -> Result<deadpool_sqlite::Object> {
@@ -501,6 +500,29 @@ trait SqliteObjectCryptoStoreExt: SqliteObjectExt {
             .await?)
     }
 
+    async fn mark_inbound_group_sessions_as_backed_up(&self, session_ids: Vec<Key>) -> Result<()> {
+        if session_ids.is_empty() {
+            // We are not expecting to be called with an empty list of sessions
+            warn!("No sessions to mark as backed up!");
+            return Ok(());
+        }
+
+        let session_ids_len = session_ids.len();
+
+        self.chunk_large_query_over(session_ids, None, move |session_ids| {
+            async move {
+                // Safety: placeholders is not generated using any user input except the number
+                // of session IDs, so it is safe from injection.
+                let sql_params = repeat_vars(session_ids_len);
+                let query = format!("UPDATE inbound_group_session SET backed_up = TRUE where session_id IN ({sql_params})");
+                self.prepare(query, move |mut stmt| stmt.execute(params_from_iter(session_ids.iter()))).await?;
+                Ok(Vec::<&str>::new())
+            }
+        }).await?;
+
+        Ok(())
+    }
+
     async fn reset_inbound_group_session_backup_state(&self) -> Result<()> {
         self.execute("UPDATE inbound_group_session SET backed_up = FALSE", ()).await?;
         Ok(())
@@ -657,39 +679,19 @@ impl SqliteObjectCryptoStoreExt for deadpool_sqlite::Object {}
 impl CryptoStore for SqliteCryptoStore {
     type Error = Error;
 
-    async fn load_account(&self) -> Result<Option<ReadOnlyAccount>> {
+    async fn load_account(&self) -> Result<Option<Account>> {
         let conn = self.acquire().await?;
         if let Some(pickle) = conn.get_kv("account").await? {
             let pickle = self.deserialize_value(&pickle)?;
 
-            let account = ReadOnlyAccount::from_pickle(pickle).map_err(|_| Error::Unpickle)?;
+            let account = Account::from_pickle(pickle).map_err(|_| Error::Unpickle)?;
 
-            let account_info = AccountInfo {
-                user_id: account.user_id.clone(),
-                device_id: account.device_id.clone(),
-                identity_keys: account.identity_keys.clone(),
-            };
-
-            *self.account_info.write().unwrap() = Some(account_info);
+            *self.static_account.write().unwrap() = Some(account.static_data().clone());
 
             Ok(Some(account))
         } else {
             Ok(None)
         }
-    }
-
-    async fn save_account(&self, account: ReadOnlyAccount) -> Result<()> {
-        let account_info = AccountInfo {
-            user_id: account.user_id.clone(),
-            device_id: account.device_id.clone(),
-            identity_keys: account.identity_keys.clone(),
-        };
-        *self.account_info.write().unwrap() = Some(account_info);
-
-        let pickled_account = account.pickle().await;
-        let serialized_account = self.serialize_value(&pickled_account)?;
-        self.acquire().await?.set_kv("account", serialized_account).await?;
-        Ok(())
     }
 
     async fn load_identity(&self) -> Result<Option<PrivateCrossSigningIdentity>> {
@@ -706,19 +708,42 @@ impl CryptoStore for SqliteCryptoStore {
         }
     }
 
-    async fn save_changes(&self, changes: Changes) -> Result<()> {
-        let pickled_account = if let Some(account) = changes.account {
-            let account_info = AccountInfo {
-                user_id: account.user_id.clone(),
-                device_id: account.device_id.clone(),
-                identity_keys: account.identity_keys.clone(),
-            };
+    async fn save_pending_changes(&self, changes: PendingChanges) -> Result<()> {
+        // Serialize calls to `save_pending_changes`; there are multiple await points
+        // below, and we're pickling data as we go, so we don't want to
+        // invalidate data we've previously read and overwrite it in the store.
+        // TODO: #2000 should make this lock go away, or change its shape.
+        let _guard = self.save_changes_lock.lock().await;
 
-            *self.account_info.write().unwrap() = Some(account_info);
-            Some(account.pickle().await)
+        let pickled_account = if let Some(account) = changes.account {
+            *self.static_account.write().unwrap() = Some(account.static_data().clone());
+            Some(account.pickle())
         } else {
             None
         };
+
+        let this = self.clone();
+        self.acquire()
+            .await?
+            .with_transaction(move |txn| {
+                if let Some(pickled_account) = pickled_account {
+                    let serialized_account = this.serialize_value(&pickled_account)?;
+                    txn.set_kv("account", &serialized_account)?;
+                }
+
+                Ok::<_, Error>(())
+            })
+            .await?;
+
+        Ok(())
+    }
+
+    async fn save_changes(&self, changes: Changes) -> Result<()> {
+        // Serialize calls to `save_changes`; there are multiple await points below, and
+        // we're pickling data as we go, so we don't want to invalidate data
+        // we've previously read and overwrite it in the store.
+        // TODO: #2000 should make this lock go away, or change its shape.
+        let _guard = self.save_changes_lock.lock().await;
 
         let pickled_private_identity =
             if let Some(i) = changes.private_identity { Some(i.pickle().await) } else { None };
@@ -752,11 +777,6 @@ impl CryptoStore for SqliteCryptoStore {
         self.acquire()
             .await?
             .with_transaction(move |txn| {
-                if let Some(pickled_account) = pickled_account {
-                    let serialized_account = this.serialize_value(&pickled_account)?;
-                    txn.set_kv("account", &serialized_account)?;
-                }
-
                 if let Some(pickled_private_identity) = &pickled_private_identity {
                     let serialized_private_identity =
                         this.serialize_value(pickled_private_identity)?;
@@ -857,7 +877,7 @@ impl CryptoStore for SqliteCryptoStore {
     }
 
     async fn get_sessions(&self, sender_key: &str) -> Result<Option<Arc<Mutex<Vec<Session>>>>> {
-        let account_info = self.get_account_info().ok_or(Error::AccountUnset)?;
+        let account_info = self.get_static_account().ok_or(Error::AccountUnset)?;
 
         if self.session_cache.get(sender_key).is_none() {
             let sessions = self
@@ -940,6 +960,22 @@ impl CryptoStore for SqliteCryptoStore {
             .collect()
     }
 
+    async fn mark_inbound_group_sessions_as_backed_up(
+        &self,
+        session_ids: &[(&RoomId, &str)],
+    ) -> Result<()> {
+        Ok(self
+            .acquire()
+            .await?
+            .mark_inbound_group_sessions_as_backed_up(
+                session_ids
+                    .iter()
+                    .map(|(_, s)| self.encode_key("inbound_group_session", s))
+                    .collect(),
+            )
+            .await?)
+    }
+
     async fn reset_backup_state(&self) -> Result<()> {
         Ok(self.acquire().await?.reset_inbound_group_session_backup_state().await?)
     }
@@ -971,7 +1007,7 @@ impl CryptoStore for SqliteCryptoStore {
             return Ok(None);
         };
 
-        let account_info = self.get_account_info().ok_or(Error::AccountUnset)?;
+        let account_info = self.get_static_account().ok_or(Error::AccountUnset)?;
 
         let pickle = self.deserialize_json(&value)?;
         let session = OutboundGroupSession::from_pickle(

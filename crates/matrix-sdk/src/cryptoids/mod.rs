@@ -45,7 +45,8 @@ impl CryptoIDs {
     pub async fn create_cryptoid(&self) -> Result<Ed25519SecretKey, Error> {
         let olm = self.client.olm_machine().await;
         let machine = olm.as_ref().ok_or(Error::NoOlmMachine)?;
-        Ok(machine.create_cryptoid().await)
+        let key = machine.create_cryptoid().await?;
+        Ok(key)
     }
 
     /// Associates a cryptoid with the given room.
@@ -56,13 +57,18 @@ impl CryptoIDs {
     ) -> Result<(), Error> {
         let olm = self.client.olm_machine().await;
         let machine = olm.as_ref().ok_or(Error::NoOlmMachine)?;
-        Ok(machine.associate_cryptoid_with_room(room, key).await)
+        machine.associate_cryptoid_with_room(room, key).await?;
+        Ok(())
     }
 
     /// Gets the existing cryptoid for a room if one exists.
     pub async fn get_cryptoid_for_room(&self, room: &str) -> Option<Ed25519SecretKey> {
         let olm = self.client.olm_machine().await;
         let machine = olm.as_ref()?;
-        machine.get_cryptoid_for_room(room).await
+        if let Ok(cryptoid) = machine.get_cryptoid_for_room(room).await {
+            cryptoid
+        } else {
+            None
+        }
     }
 }

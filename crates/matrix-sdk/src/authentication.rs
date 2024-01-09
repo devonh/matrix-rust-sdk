@@ -12,23 +12,42 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::pin::Pin;
+
+use as_variant::as_variant;
+use futures_core::Future;
 use matrix_sdk_base::SessionMeta;
-use ruma::api::client::discovery::discover_homeserver::AuthenticationServerInfo;
 use tokio::sync::{broadcast, Mutex, OnceCell};
 
 #[cfg(feature = "experimental-oidc")]
-use crate::oidc::{self, Oidc, OidcAuthData};
+use crate::oidc::{self, Oidc, OidcAuthData, OidcCtx};
 use crate::{
     matrix_auth::{self, MatrixAuth, MatrixAuthData},
-    RefreshTokenError, SessionChange,
+    Client, RefreshTokenError, SessionChange,
 };
+
+/// Session tokens, for any kind of authentication.
+#[allow(missing_debug_implementations, clippy::large_enum_variant)]
+pub enum SessionTokens {
+    /// Tokens for a [`matrix_auth`] session.
+    Matrix(matrix_auth::MatrixSessionTokens),
+    #[cfg(feature = "experimental-oidc")]
+    /// Tokens for an [`oidc`] session.
+    Oidc(oidc::OidcSessionTokens),
+}
+
+pub(crate) type SessionCallbackError = Box<dyn std::error::Error + Send + Sync>;
+pub(crate) type SaveSessionCallback = dyn Fn(Client) -> Pin<Box<dyn Send + Sync + Future<Output = Result<(), SessionCallbackError>>>>
+    + Send
+    + Sync;
+pub(crate) type ReloadSessionCallback =
+    dyn Fn(Client) -> Result<SessionTokens, SessionCallbackError> + Send + Sync;
 
 /// All the data relative to authentication, and that must be shared between a
 /// client and all its children.
 pub(crate) struct AuthCtx {
-    /// The authentication server info discovered from the homeserver.
-    #[cfg_attr(not(feature = "experimental-oidc"), allow(dead_code))]
-    pub(crate) authentication_server_info: Option<AuthenticationServerInfo>,
+    #[cfg(feature = "experimental-oidc")]
+    pub(crate) oidc: OidcCtx,
 
     /// Whether to try to refresh the access token automatically when an
     /// `M_UNKNOWN_TOKEN` error is encountered.
@@ -44,6 +63,21 @@ pub(crate) struct AuthCtx {
 
     /// Authentication data to keep in memory.
     pub(crate) auth_data: OnceCell<AuthData>,
+
+    /// A callback called whenever we need an absolute source of truth for the
+    /// current session tokens.
+    ///
+    /// This is required only in multiple processes setups.
+    pub(crate) reload_session_callback: OnceCell<Box<ReloadSessionCallback>>,
+
+    /// A callback to save a session back into the app's secure storage.
+    ///
+    /// This is always called, independently of the presence of a cross-process
+    /// lock.
+    ///
+    /// Internal invariant: this must be called only after `set_session_tokens`
+    /// has been called, not before.
+    pub(crate) save_session_callback: OnceCell<Box<SaveSessionCallback>>,
 }
 
 /// An enum over all the possible authentication APIs.
@@ -63,11 +97,11 @@ pub enum AuthApi {
 #[non_exhaustive]
 pub enum AuthSession {
     /// A session using the native Matrix authentication API.
-    Matrix(matrix_auth::Session),
+    Matrix(matrix_auth::MatrixSession),
 
     /// A session using the OpenID Connect API.
     #[cfg(feature = "experimental-oidc")]
-    Oidc(oidc::FullSession),
+    Oidc(oidc::OidcSession),
 }
 
 impl AuthSession {
@@ -108,15 +142,15 @@ impl AuthSession {
     }
 }
 
-impl From<matrix_auth::Session> for AuthSession {
-    fn from(session: matrix_auth::Session) -> Self {
+impl From<matrix_auth::MatrixSession> for AuthSession {
+    fn from(session: matrix_auth::MatrixSession) -> Self {
         Self::Matrix(session)
     }
 }
 
 #[cfg(feature = "experimental-oidc")]
-impl From<oidc::FullSession> for AuthSession {
-    fn from(session: oidc::FullSession) -> Self {
+impl From<oidc::OidcSession> for AuthSession {
+    fn from(session: oidc::OidcSession) -> Self {
         Self::Oidc(session)
     }
 }
@@ -133,18 +167,14 @@ pub(crate) enum AuthData {
 
 impl AuthData {
     pub(crate) fn as_matrix(&self) -> Option<&MatrixAuthData> {
-        match self {
-            AuthData::Matrix(d) => Some(d),
-            #[cfg(feature = "experimental-oidc")]
-            _ => None,
-        }
+        as_variant!(self, Self::Matrix)
     }
 
     pub(crate) fn access_token(&self) -> Option<String> {
         let token = match self {
-            AuthData::Matrix(d) => d.tokens.get().access_token,
+            Self::Matrix(d) => d.tokens.get().access_token,
             #[cfg(feature = "experimental-oidc")]
-            AuthData::Oidc(d) => d.tokens.get()?.get().access_token,
+            Self::Oidc(d) => d.tokens.get()?.get().access_token,
         };
 
         Some(token)

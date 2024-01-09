@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use assert_matches::assert_matches;
+use assert_matches2::assert_let;
 use async_trait::async_trait;
 use matrix_sdk_test::test_json;
 use ruma::{
@@ -199,11 +200,8 @@ impl StateStoreIntegrationTests for DynStateStore {
 
     async fn test_media_content(&self) {
         let uri = mxc_uri!("mxc://localhost/media");
-        let content: Vec<u8> = "somebinarydata".into();
-
         let request_file =
             MediaRequest { source: MediaSource::Plain(uri.to_owned()), format: MediaFormat::File };
-
         let request_thumbnail = MediaRequest {
             source: MediaSource::Plain(uri.to_owned()),
             format: MediaFormat::Thumbnail(MediaThumbnailSize {
@@ -213,6 +211,17 @@ impl StateStoreIntegrationTests for DynStateStore {
             }),
         };
 
+        let other_uri = mxc_uri!("mxc://localhost/media-other");
+        let request_other_file = MediaRequest {
+            source: MediaSource::Plain(other_uri.to_owned()),
+            format: MediaFormat::File,
+        };
+
+        let content: Vec<u8> = "hello".into();
+        let thumbnail_content: Vec<u8> = "world".into();
+        let other_content: Vec<u8> = "foo".into();
+
+        // Media isn't present in the cache.
         assert!(
             self.get_media_content(&request_file).await.unwrap().is_none(),
             "unexpected media found"
@@ -222,35 +231,63 @@ impl StateStoreIntegrationTests for DynStateStore {
             "media not found"
         );
 
+        // Let's add the media.
         self.add_media_content(&request_file, content.clone()).await.expect("adding media failed");
-        assert!(
-            self.get_media_content(&request_file).await.unwrap().is_some(),
+
+        // Media is present in the cache.
+        assert_eq!(
+            self.get_media_content(&request_file).await.unwrap().as_ref(),
+            Some(&content),
             "media not found though added"
         );
 
+        // Let's remove the media.
         self.remove_media_content(&request_file).await.expect("removing media failed");
+
+        // Media isn't present in the cache.
         assert!(
             self.get_media_content(&request_file).await.unwrap().is_none(),
             "media still there after removing"
         );
 
+        // Let's add the media again.
         self.add_media_content(&request_file, content.clone())
             .await
             .expect("adding media again failed");
-        assert!(
-            self.get_media_content(&request_file).await.unwrap().is_some(),
+
+        assert_eq!(
+            self.get_media_content(&request_file).await.unwrap().as_ref(),
+            Some(&content),
             "media not found after adding again"
         );
 
-        self.add_media_content(&request_thumbnail, content.clone())
+        // Let's add the thumbnail media.
+        self.add_media_content(&request_thumbnail, thumbnail_content.clone())
             .await
             .expect("adding thumbnail failed");
-        assert!(
-            self.get_media_content(&request_thumbnail).await.unwrap().is_some(),
+
+        // Media's thumbnail is present.
+        assert_eq!(
+            self.get_media_content(&request_thumbnail).await.unwrap().as_ref(),
+            Some(&thumbnail_content),
             "thumbnail not found"
         );
 
+        // Let's add another media with a different URI.
+        self.add_media_content(&request_other_file, other_content.clone())
+            .await
+            .expect("adding other media failed");
+
+        // Other file is present.
+        assert_eq!(
+            self.get_media_content(&request_other_file).await.unwrap().as_ref(),
+            Some(&other_content),
+            "other file not found"
+        );
+
+        // Let's remove media based on URI.
         self.remove_media_content_for_uri(uri).await.expect("removing all media for uri failed");
+
         assert!(
             self.get_media_content(&request_file).await.unwrap().is_none(),
             "media wasn't removed"
@@ -258,6 +295,10 @@ impl StateStoreIntegrationTests for DynStateStore {
         assert!(
             self.get_media_content(&request_thumbnail).await.unwrap().is_none(),
             "thumbnail wasn't removed"
+        );
+        assert!(
+            self.get_media_content(&request_other_file).await.unwrap().is_some(),
+            "other media was removed"
         );
     }
 
@@ -484,9 +525,9 @@ impl StateStoreIntegrationTests for DynStateStore {
         )
         .await
         .unwrap();
-        let stored_filter_id = assert_matches!(
-            self.get_kv_data(StateStoreDataKey::Filter(filter_name)).await,
-            Ok(Some(StateStoreDataValue::Filter(s))) => s
+        assert_let!(
+            Ok(Some(StateStoreDataValue::Filter(stored_filter_id))) =
+                self.get_kv_data(StateStoreDataKey::Filter(filter_name)).await
         );
         assert_eq!(stored_filter_id, filter_id);
 
@@ -503,9 +544,9 @@ impl StateStoreIntegrationTests for DynStateStore {
         let changes =
             StateChanges { sync_token: Some(sync_token_1.to_owned()), ..Default::default() };
         self.save_changes(&changes).await.unwrap();
-        let stored_sync_token = assert_matches!(
-            self.get_kv_data(StateStoreDataKey::SyncToken).await,
-            Ok(Some(StateStoreDataValue::SyncToken(s))) => s
+        assert_let!(
+            Ok(Some(StateStoreDataValue::SyncToken(stored_sync_token))) =
+                self.get_kv_data(StateStoreDataKey::SyncToken).await
         );
         assert_eq!(stored_sync_token, sync_token_1);
 
@@ -515,9 +556,9 @@ impl StateStoreIntegrationTests for DynStateStore {
         )
         .await
         .unwrap();
-        let stored_sync_token = assert_matches!(
-            self.get_kv_data(StateStoreDataKey::SyncToken).await,
-            Ok(Some(StateStoreDataValue::SyncToken(s))) => s
+        assert_let!(
+            Ok(Some(StateStoreDataValue::SyncToken(stored_sync_token))) =
+                self.get_kv_data(StateStoreDataKey::SyncToken).await
         );
         assert_eq!(stored_sync_token, sync_token_2);
 

@@ -26,8 +26,12 @@ use tracing::{debug, field::debug, info, instrument, warn, Span};
 use url::Url;
 
 use super::{Client, ClientInner};
+#[cfg(feature = "e2e-encryption")]
+use crate::encryption::EncryptionSettings;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::http_client::HttpSettings;
+#[cfg(feature = "experimental-oidc")]
+use crate::oidc::OidcCtx;
 use crate::{
     authentication::AuthCtx, config::RequestConfig, error::RumaApiError, http_client::HttpClient,
     HttpError,
@@ -84,6 +88,8 @@ pub struct ClientBuilder {
     server_versions: Option<Box<[MatrixVersion]>>,
     handle_refresh_tokens: bool,
     base_client: Option<BaseClient>,
+    #[cfg(feature = "e2e-encryption")]
+    encryption_settings: EncryptionSettings,
 }
 
 impl ClientBuilder {
@@ -99,6 +105,8 @@ impl ClientBuilder {
             server_versions: None,
             handle_refresh_tokens: false,
             base_client: None,
+            #[cfg(feature = "e2e-encryption")]
+            encryption_settings: Default::default(),
         }
     }
 
@@ -142,7 +150,8 @@ impl ClientBuilder {
     }
 
     /// Set the server name to discover the homeserver from, assuming an HTTP
-    /// (not secured) scheme.
+    /// (not secured) scheme. This also relaxes OIDC discovery checks to allow
+    /// HTTP schemes.
     ///
     /// This method is mutually exclusive with
     /// [`homeserver_url()`][Self::homeserver_url], if you set both whatever was
@@ -319,6 +328,14 @@ impl ClientBuilder {
         self
     }
 
+    /// Enables specific encryption settings that will persist throughout the
+    /// entire lifetime of the `Client`.
+    #[cfg(feature = "e2e-encryption")]
+    pub fn with_encryption_settings(mut self, settings: EncryptionSettings) -> Self {
+        self.encryption_settings = settings;
+        self
+    }
+
     /// Create a [`Client`] with the options set on this builder.
     ///
     /// # Errors
@@ -374,7 +391,10 @@ impl ClientBuilder {
 
         let http_client = HttpClient::new(inner_http_client.clone(), self.request_config);
 
+        #[cfg(feature = "experimental-oidc")]
         let mut authentication_server_info = None;
+        #[cfg(feature = "experimental-oidc")]
+        let allow_insecure_oidc;
 
         #[cfg(feature = "experimental-sliding-sync")]
         let mut sliding_sync_proxy: Option<Url> = None;
@@ -386,6 +406,12 @@ impl ClientBuilder {
                     sliding_sync_proxy =
                         self.sliding_sync_proxy.as_ref().map(|url| Url::parse(url)).transpose()?;
                 }
+
+                #[cfg(feature = "experimental-oidc")]
+                {
+                    allow_insecure_oidc = url.starts_with("http://");
+                }
+
                 url
             }
             HomeserverConfig::ServerName { server: server_name, protocol } => {
@@ -411,7 +437,11 @@ impl ClientBuilder {
                         err => ClientBuildError::Http(err),
                     })?;
 
-                authentication_server_info = well_known.authentication;
+                #[cfg(feature = "experimental-oidc")]
+                {
+                    authentication_server_info = well_known.authentication;
+                    allow_insecure_oidc = matches!(protocol, UrlScheme::Http);
+                }
 
                 #[cfg(feature = "experimental-sliding-sync")]
                 if let Some(proxy) = well_known.sliding_sync_proxy.map(|p| p.url) {
@@ -430,14 +460,17 @@ impl ClientBuilder {
         let homeserver = Url::parse(&homeserver)?;
 
         let auth_ctx = Arc::new(AuthCtx {
-            authentication_server_info,
             handle_refresh_tokens: self.handle_refresh_tokens,
             refresh_token_lock: Mutex::new(Ok(())),
             session_change_sender: broadcast::Sender::new(1),
             auth_data: OnceCell::default(),
+            reload_session_callback: OnceCell::default(),
+            save_session_callback: OnceCell::default(),
+            #[cfg(feature = "experimental-oidc")]
+            oidc: OidcCtx::new(authentication_server_info, allow_insecure_oidc),
         });
 
-        let inner = Arc::new(ClientInner::new(
+        let inner = ClientInner::new(
             auth_ctx,
             homeserver,
             #[cfg(feature = "experimental-sliding-sync")]
@@ -446,7 +479,9 @@ impl ClientBuilder {
             base_client,
             self.server_versions,
             self.respect_login_well_known,
-        ));
+            #[cfg(feature = "e2e-encryption")]
+            self.encryption_settings,
+        );
 
         debug!("Done building the Client");
 
@@ -454,7 +489,7 @@ impl ClientBuilder {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 enum UrlScheme {
     Http,
     Https,

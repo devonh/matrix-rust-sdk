@@ -50,12 +50,13 @@ use tokio::{
 use tracing::{debug, error, info, instrument, trace, warn, Instrument, Span};
 use url::Url;
 
+#[cfg(feature = "e2e-encryption")]
+use self::utils::JoinHandleExt as _;
 pub use self::{builder::*, error::*, list::*, room::*};
 use self::{
     cache::restore_sliding_sync_state,
     client::SlidingSyncResponseProcessor,
     sticky_parameters::{LazyTransactionId, SlidingSyncStickyManager, StickyData},
-    utils::JoinHandleExt as _,
 };
 use crate::{config::RequestConfig, Client, Result};
 
@@ -291,9 +292,8 @@ impl SlidingSync {
 
         {
             debug!(
-                pos = ?sliding_sync_response.pos,
                 delta_token = ?sliding_sync_response.delta_token,
-                "Update position markers`"
+                "Update position markers"
             );
 
             // Look up for this new `pos` in the past position markers.
@@ -310,8 +310,10 @@ impl SlidingSync {
             }
         }
 
-        // Compute `limited`.
-        {
+        let must_process_rooms_response = self.must_process_rooms_response().await;
+
+        // Compute `limited`, if we're interested in a room list query.
+        if must_process_rooms_response {
             let known_rooms = self.inner.rooms.read().await;
             compute_limited(&known_rooms, &mut sliding_sync_response.rooms);
         }
@@ -323,24 +325,28 @@ impl SlidingSync {
         // `sliding_sync_response` is vital, so it must be done somewhere; for now it
         // happens here.
 
-        let mut response_processor = SlidingSyncResponseProcessor::new(self.inner.client.clone());
+        let mut sync_response = {
+            let rooms = &*self.inner.rooms.read().await;
+            let mut response_processor =
+                SlidingSyncResponseProcessor::new(self.inner.client.clone(), rooms);
 
-        #[cfg(feature = "e2e-encryption")]
-        if self.is_e2ee_enabled() {
-            response_processor.handle_encryption(&sliding_sync_response.extensions).await?
-        }
+            #[cfg(feature = "e2e-encryption")]
+            if self.is_e2ee_enabled() {
+                response_processor.handle_encryption(&sliding_sync_response.extensions).await?
+            }
 
-        // Only handle the room's subsection of the response, if this sliding sync was
-        // configured to do so. That's because even when not requesting it,
-        // sometimes the current (2023-07-20) proxy will forward room events
-        // unrelated to the current connection's parameters.
-        //
-        // NOTE: SS proxy workaround.
-        if self.must_process_rooms_response().await {
-            response_processor.handle_room_response(&sliding_sync_response).await?;
-        }
+            // Only handle the room's subsection of the response, if this sliding sync was
+            // configured to do so. That's because even when not requesting it,
+            // sometimes the current (2023-07-20) proxy will forward room events
+            // unrelated to the current connection's parameters.
+            //
+            // NOTE: SS proxy workaround.
+            if must_process_rooms_response {
+                response_processor.handle_room_response(&sliding_sync_response).await?;
+            }
 
-        let mut sync_response = response_processor.process_and_take_response().await?;
+            response_processor.process_and_take_response().await?
+        };
 
         debug!(?sync_response, "Sliding Sync response has been handled by the client");
 
@@ -486,7 +492,11 @@ impl SlidingSync {
             if let Some(fields) = &restored_fields {
                 // Override the memory one with the database one, for consistency.
                 if fields.pos != position_guard.pos {
-                    info!("Pos from previous request ('{:?}') was different from pos in database ('{:?}').", position_guard.pos, fields.pos);
+                    info!(
+                        "Pos from previous request ('{:?}') was different from \
+                         pos in database ('{:?}').",
+                        position_guard.pos, fields.pos
+                    );
                     position_guard.pos = fields.pos.clone();
                 }
                 fields.pos.clone()
@@ -943,79 +953,74 @@ impl StickyData for SlidingSyncStickyParameters {
 /// TODO remove this workaround as soon as support of the `limited` flag is
 /// properly implemented in the open-source proxy: https://github.com/matrix-org/sliding-sync/issues/197
 // NOTE: SS proxy workaround.
-#[instrument(skip_all)]
 fn compute_limited(
-    known_rooms: &BTreeMap<OwnedRoomId, SlidingSyncRoom>,
-    response_rooms: &mut BTreeMap<OwnedRoomId, v4::SlidingSyncRoom>,
+    local_rooms: &BTreeMap<OwnedRoomId, SlidingSyncRoom>,
+    remote_rooms: &mut BTreeMap<OwnedRoomId, v4::SlidingSyncRoom>,
 ) {
-    for (room_id, room) in response_rooms {
+    for (room_id, remote_room) in remote_rooms {
         // Only rooms marked as initially loaded are subject to the fixup.
-        let initial = room.initial.unwrap_or(false);
+        let initial = remote_room.initial.unwrap_or(false);
         if !initial {
             continue;
         }
 
-        if room.limited {
+        if remote_room.limited {
             // If the room was already marked as limited, the server knew more than we do.
             continue;
         }
 
-        trace!(?room_id, "starting");
-
-        // If the known room had some timeline events, consider it's a `limited` if
-        // there's absolutely no overlap between the known events and
-        // the new events in the timeline.
-        if let Some(known_room) = known_rooms.get(room_id) {
-            let known_events = known_room.timeline_queue();
-
-            if room.timeline.is_empty() && !known_events.is_empty() {
-                // If the cached timeline had events, but the one in the response didn't have
-                // any, don't mark the room as limited.
-                trace!(
-                    "no timeline updates in response, local timeline had events => not limited."
-                );
-                continue;
-            }
-
-            // Gather all the known event IDs. Ignore events that don't have an event ID.
-            let num_known_events = known_events.len();
-            let known_events: HashSet<OwnedEventId> =
-                HashSet::from_iter(known_events.into_iter().filter_map(|event| event.event_id()));
-
-            if num_known_events != known_events.len() {
-                trace!(
-                    "{} local timeline events had no IDs",
-                    num_known_events - known_events.len()
-                );
-            }
-
-            // There's overlap if, and only if, there's at least one event in the
-            // response's timeline that matches an event id we've seen before.
-            let mut num_missing_event_ids = 0;
-            let overlap = room.timeline.iter().any(|seen_event| {
-                if let Some(seen_event_id) =
-                    seen_event.get_field::<OwnedEventId>("event_id").ok().flatten()
-                {
-                    known_events.contains(&seen_event_id)
-                } else {
-                    warn!("unable to get event_id from {seen_event:?} when computing limited flag");
-                    num_missing_event_ids += 1;
-                    false
-                }
-            });
-
-            room.limited = !overlap;
-
-            trace!(
-                num_events_response = room.timeline.len(),
-                num_events_local = known_events.len(),
-                num_missing_event_ids,
-                room_limited = room.limited,
-                "done"
-            );
-        } else {
-            trace!("room isn't known locally => not limited");
+        let remote_events = &remote_room.timeline;
+        if remote_events.is_empty() {
+            trace!(?room_id, "no timeline updates in the response => not limited");
+            continue;
         }
+
+        let Some(local_room) = local_rooms.get(room_id) else {
+            trace!(?room_id, "room isn't known locally => not limited");
+            continue;
+        };
+
+        let local_events = local_room.timeline_queue();
+
+        if local_events.is_empty() {
+            trace!(?room_id, "local timeline had no events => not limited");
+            continue;
+        }
+
+        // If the local room had some timeline events, consider it's a `limited` if
+        // there's absolutely no overlap between the known events and the new
+        // events in the timeline.
+
+        // Gather all the known event IDs. Ignore events that don't have an event ID.
+        let num_local_events = local_events.len();
+        let local_events_with_ids: HashSet<OwnedEventId> =
+            HashSet::from_iter(local_events.into_iter().filter_map(|event| event.event_id()));
+
+        // There's overlap if, and only if, there's at least one event in the response's
+        // timeline that matches an event id we've seen before.
+        let mut num_remote_events_missing_ids = 0;
+        let overlap = remote_events.iter().any(|remote_event| {
+            if let Some(remote_event_id) =
+                remote_event.get_field::<OwnedEventId>("event_id").ok().flatten()
+            {
+                local_events_with_ids.contains(&remote_event_id)
+            } else {
+                num_remote_events_missing_ids += 1;
+                false
+            }
+        });
+
+        remote_room.limited = !overlap;
+
+        trace!(
+            ?room_id,
+            num_events_response = remote_events.len(),
+            num_local_events,
+            num_local_events_with_ids = local_events_with_ids.len(),
+            num_remote_events_missing_ids,
+            room_limited = remote_room.limited,
+            "done"
+        );
     }
 }
 
@@ -1148,7 +1153,7 @@ mod tests {
                 .mount_as_scoped(&server)
                 .await;
 
-            assert_matches!(room0.request_members().await, Ok(Some(_)));
+            assert_matches!(room0.request_members().await, Ok(()));
         }
 
         // Members are now synced! We can start subscribing and see how it goes.
@@ -1935,12 +1940,13 @@ mod tests {
         let no_overlap = room_id!("!omelette:example.org");
         let partial_overlap = room_id!("!fromage:example.org");
         let complete_overlap = room_id!("!baguette:example.org");
-        let no_new_events = room_id!("!pain:example.org");
+        let no_remote_events = room_id!("!pain:example.org");
+        let no_local_events = room_id!("!crepe:example.org");
         let already_limited = room_id!("!paris:example.org");
 
         let response_timeline = vec![event_c.event.clone(), event_d.event.clone()];
 
-        let known_rooms = BTreeMap::from_iter([
+        let local_rooms = BTreeMap::from_iter([
             (
                 // This has no events overlapping with the response timeline, hence limited, but
                 // it's not marked as initial in the response.
@@ -1985,12 +1991,23 @@ mod tests {
             (
                 // We locally have events for this room, and receive none in the response: not
                 // limited.
-                no_new_events.to_owned(),
+                no_remote_events.to_owned(),
                 SlidingSyncRoom::new(
                     client.clone(),
-                    no_new_events.to_owned(),
+                    no_remote_events.to_owned(),
                     v4::SlidingSyncRoom::default(),
                     vec![event_c.clone(), event_d.clone()],
+                ),
+            ),
+            (
+                // We don't have events for this room locally, and even if the remote room contains
+                // some events, it's not a limited sync.
+                no_local_events.to_owned(),
+                SlidingSyncRoom::new(
+                    client.clone(),
+                    no_local_events.to_owned(),
+                    v4::SlidingSyncRoom::default(),
+                    vec![],
                 ),
             ),
             (
@@ -2006,7 +2023,7 @@ mod tests {
             ),
         ]);
 
-        let mut response_rooms = BTreeMap::from_iter([
+        let mut remote_rooms = BTreeMap::from_iter([
             (
                 not_initial.to_owned(),
                 assign!(v4::SlidingSyncRoom::default(), { timeline: response_timeline }),
@@ -2033,10 +2050,17 @@ mod tests {
                 }),
             ),
             (
-                no_new_events.to_owned(),
+                no_remote_events.to_owned(),
                 assign!(v4::SlidingSyncRoom::default(), {
                     initial: Some(true),
                     timeline: vec![],
+                }),
+            ),
+            (
+                no_local_events.to_owned(),
+                assign!(v4::SlidingSyncRoom::default(), {
+                    initial: Some(true),
+                    timeline: vec![event_c.event.clone(), event_d.event.clone()],
                 }),
             ),
             (
@@ -2049,14 +2073,15 @@ mod tests {
             ),
         ]);
 
-        compute_limited(&known_rooms, &mut response_rooms);
+        compute_limited(&local_rooms, &mut remote_rooms);
 
-        assert!(!response_rooms.get(not_initial).unwrap().limited);
-        assert!(response_rooms.get(no_overlap).unwrap().limited);
-        assert!(!response_rooms.get(partial_overlap).unwrap().limited);
-        assert!(!response_rooms.get(complete_overlap).unwrap().limited);
-        assert!(!response_rooms.get(no_new_events).unwrap().limited);
-        assert!(response_rooms.get(already_limited).unwrap().limited);
+        assert!(!remote_rooms.get(not_initial).unwrap().limited);
+        assert!(remote_rooms.get(no_overlap).unwrap().limited);
+        assert!(!remote_rooms.get(partial_overlap).unwrap().limited);
+        assert!(!remote_rooms.get(complete_overlap).unwrap().limited);
+        assert!(!remote_rooms.get(no_remote_events).unwrap().limited);
+        assert!(!remote_rooms.get(no_local_events).unwrap().limited);
+        assert!(remote_rooms.get(already_limited).unwrap().limited);
     }
 
     #[async_test]

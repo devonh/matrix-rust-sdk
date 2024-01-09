@@ -1,11 +1,13 @@
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    env::consts::{DLL_PREFIX, DLL_SUFFIX},
+};
 
 use clap::{Args, Subcommand};
 use xshell::{cmd, pushd};
 
-use crate::{build_docs, workspace, DenyWarnings, Result};
+use crate::{build_docs, workspace, DenyWarnings, Result, NIGHTLY};
 
-const NIGHTLY: &str = "nightly-2023-07-03";
 const WASM_TIMEOUT_ENV_KEY: &str = "WASM_BINDGEN_TEST_TIMEOUT";
 const WASM_TIMEOUT_VALUE: &str = "120";
 
@@ -35,13 +37,13 @@ enum CiCommand {
         cmd: Option<FeatureSet>,
     },
 
-    /// Run checks for the wasm target
+    /// Run clippy checks for the wasm target
     Wasm {
         #[clap(subcommand)]
         cmd: Option<WasmFeatureSet>,
     },
 
-    /// Run wasm-pack tests
+    /// Run tests with `wasm-pack test`
     WasmPack {
         #[clap(subcommand)]
         cmd: Option<WasmFeatureSet>,
@@ -72,14 +74,24 @@ enum FeatureSet {
 #[derive(Subcommand, PartialEq, Eq, PartialOrd, Ord)]
 #[allow(clippy::enum_variant_names)]
 enum WasmFeatureSet {
+    /// Check `matrix-sdk-qrcode` crate
     MatrixSdkQrcode,
-    MatrixSdkNoDefault,
+    /// Check `matrix-sdk-base` crate
     MatrixSdkBase,
+    /// Check `matrix-sdk-common` crate
     MatrixSdkCommon,
+    /// Check `matrix-sdk` crate with no default features
+    MatrixSdkNoDefault,
+    /// Check `matrix-sdk` crate with `indexeddb` feature (but not
+    /// `e2e-encryption`)
     MatrixSdkIndexeddbStoresNoCrypto,
+    /// Check `matrix-sdk` crate with `indexeddb` and `e2e-encryption` features
     MatrixSdkIndexeddbStores,
+    /// Check `matrix-sdk-indexeddb` crate without `e2e-encryption` feature
     IndexeddbNoCrypto,
+    /// Check `matrix-sdk-indexeddb` crate with `e2e-encryption` feature
     IndexeddbWithCrypto,
+    /// Equivalent to `IndexeddbNoCrypto` followed by `IndexeddbWithCrypto`
     Indexeddb,
 }
 
@@ -121,22 +133,22 @@ fn check_bindings() -> Result<()> {
     cmd!(
         "
         rustup run stable cargo run -p uniffi-bindgen -- generate
+            --library
             --language kotlin
             --language swift
-            --lib-file target/debug/libmatrix_sdk_ffi.a
             --out-dir target/generated-bindings
-            bindings/matrix-sdk-ffi/src/api.udl
+            target/debug/{DLL_PREFIX}matrix_sdk_ffi{DLL_SUFFIX}
         "
     )
     .run()?;
     cmd!(
         "
         rustup run stable cargo run -p uniffi-bindgen -- generate
+            --library
             --language kotlin
             --language swift
-            --lib-file target/debug/libmatrix_sdk_crypto_ffi.a
             --out-dir target/generated-bindings
-            bindings/matrix-sdk-crypto-ffi/src/olm.udl
+            target/debug/{DLL_PREFIX}matrix_sdk_crypto_ffi{DLL_SUFFIX}
         "
     )
     .run()?;
@@ -229,15 +241,10 @@ fn run_feature_tests(cmd: Option<FeatureSet>) -> Result<()> {
 }
 
 fn run_crypto_tests() -> Result<()> {
-    cmd!(
-        "rustup run stable cargo clippy -p matrix-sdk-crypto --features=backups_v1 -- -D warnings"
-    )
-    .run()?;
+    cmd!("rustup run stable cargo clippy -p matrix-sdk-crypto -- -D warnings").run()?;
     cmd!("rustup run stable cargo nextest run -p matrix-sdk-crypto --no-default-features --features testing").run()?;
-    cmd!("rustup run stable cargo nextest run -p matrix-sdk-crypto --features=backups_v1,testing")
-        .run()?;
-    cmd!("rustup run stable cargo test --doc -p matrix-sdk-crypto --features=backups_v1,testing")
-        .run()?;
+    cmd!("rustup run stable cargo nextest run -p matrix-sdk-crypto --features=testing").run()?;
+    cmd!("rustup run stable cargo test --doc -p matrix-sdk-crypto --features=testing").run()?;
     cmd!(
         "rustup run stable cargo clippy -p matrix-sdk-crypto --features=experimental-algorithms -- -D warnings"
     )

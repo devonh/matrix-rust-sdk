@@ -46,7 +46,7 @@ use ruma::{
     },
     push::{Action, PushConditionRoomCtx, Ruleset},
     serde::Raw,
-    MilliSecondsSinceUnixEpoch, OwnedUserId, RoomId, RoomVersionId, UInt, UserId,
+    MilliSecondsSinceUnixEpoch, OwnedRoomId, OwnedUserId, RoomId, RoomVersionId, UInt, UserId,
 };
 use tokio::sync::RwLock;
 #[cfg(feature = "e2e-encryption")]
@@ -54,7 +54,7 @@ use tokio::sync::RwLockReadGuard;
 use tracing::{debug, info, instrument, trace, warn};
 
 #[cfg(all(feature = "e2e-encryption", feature = "experimental-sliding-sync"))]
-use crate::latest_event::{is_suitable_for_latest_event, PossibleLatestEvent};
+use crate::latest_event::{is_suitable_for_latest_event, LatestEvent, PossibleLatestEvent};
 use crate::{
     deserialized_responses::{AmbiguityChanges, MembersResponse, SyncTimelineEvent},
     error::Result,
@@ -187,9 +187,6 @@ impl BaseClient {
     ///
     /// * `session_meta` - The meta of a session that the user already has from
     ///   a previous login call.
-    /// * `regenerate_olm`: whether the `OlmMachine` should be regenerated or
-    ///   not. True for
-    /// restored sessions, false for inherited sessions.
     ///
     /// This method panics if it is called twice.
     pub async fn set_session_meta(&self, session_meta: SessionMeta) -> Result<()> {
@@ -286,6 +283,7 @@ impl BaseClient {
         user_ids: &mut BTreeSet<OwnedUserId>,
         room_info: &mut RoomInfo,
         changes: &mut StateChanges,
+        notifications: &mut BTreeMap<OwnedRoomId, Vec<Notification>>,
         ambiguity_cache: &mut AmbiguityCache,
     ) -> Result<Timeline> {
         let mut timeline = Timeline::new(limited, prev_batch);
@@ -400,8 +398,7 @@ impl BaseClient {
                         let actions = push_rules.get_actions(&event.event, context);
 
                         if actions.iter().any(Action::should_notify) {
-                            changes.add_notification(
-                                room.room_id(),
+                            notifications.entry(room.room_id().to_owned()).or_default().push(
                                 Notification::new(
                                     actions.to_owned(),
                                     event.event.clone(),
@@ -544,8 +541,7 @@ impl BaseClient {
                 for (user_id, rooms) in e.content.iter() {
                     for room_id in rooms {
                         trace!(
-                            room_id = room_id.as_str(),
-                            target = user_id.as_str(),
+                            ?room_id, target = ?user_id,
                             "Marking room as direct room"
                         );
 
@@ -626,20 +622,26 @@ impl BaseClient {
     async fn decrypt_latest_suitable_event(
         &self,
         room: &Room,
-    ) -> Option<(SyncTimelineEvent, usize)> {
+    ) -> Option<(Box<LatestEvent>, usize)> {
         let enc_events = room.latest_encrypted_events();
 
         // Walk backwards through the encrypted events, looking for one we can decrypt
         for (i, event) in enc_events.iter().enumerate().rev() {
-            if let Ok(Some(decrypted)) = self.decrypt_sync_room_event(event, room.room_id()).await {
+            // Size of the decrypt_sync_room_event future should not impact this
+            // async fn since it is likely that there aren't even any encrypted
+            // events when calling it.
+            let decrypt_sync_room_event =
+                Box::pin(self.decrypt_sync_room_event(event, room.room_id()));
+
+            if let Ok(Some(decrypted)) = decrypt_sync_room_event.await {
                 // We found an event we can decrypt
                 if let Ok(any_sync_event) = decrypted.event.deserialize() {
                     // We can deserialize it to find its type
-                    if let PossibleLatestEvent::YesMessageLike(_) =
+                    if let PossibleLatestEvent::YesRoomMessage(_) =
                         is_suitable_for_latest_event(&any_sync_event)
                     {
                         // The event is the right type for us to use as latest_event
-                        return Some((decrypted, i));
+                        return Some((Box::new(LatestEvent::new(decrypted)), i));
                     }
                 }
             }
@@ -708,6 +710,7 @@ impl BaseClient {
         // that case we already received this response and there's nothing to
         // do.
         if self.store.sync_token.read().await.as_ref() == Some(&response.next_batch) {
+            info!("Got the same sync response twice");
             return Ok(SyncResponse::default());
         }
 
@@ -739,6 +742,7 @@ impl BaseClient {
         let push_rules = self.get_push_rules(&changes).await?;
 
         let mut new_rooms = Rooms::default();
+        let mut notifications = Default::default();
 
         for (room_id, new_info) in response.rooms.join {
             let room = self.store.get_or_create_room(&room_id, RoomState::Joined);
@@ -794,6 +798,7 @@ impl BaseClient {
                     &mut user_ids,
                     &mut room_info,
                     &mut changes,
+                    &mut notifications,
                     &mut ambiguity_cache,
                 )
                 .await?;
@@ -864,6 +869,7 @@ impl BaseClient {
                     &mut user_ids,
                     &mut room_info,
                     &mut changes,
+                    &mut notifications,
                     &mut ambiguity_cache,
                 )
                 .await?;
@@ -923,7 +929,7 @@ impl BaseClient {
             account_data: response.account_data.events,
             to_device,
             ambiguity_changes: AmbiguityChanges { changes: ambiguity_cache.changes },
-            notifications: changes.notifications,
+            notifications,
         };
 
         Ok(response)
@@ -979,7 +985,7 @@ impl BaseClient {
                 // TODO: All the actions in this loop used to be done only when the membership
                 // event was not in the store before. This was changed with the new room API,
                 // because e.g. leaving a room makes members events outdated and they need to be
-                // fetched by `get_members`. Therefore, they need to be overwritten here, even
+                // fetched by `members`. Therefore, they need to be overwritten here, even
                 // if they exist.
                 // However, this makes a new problem occur where setting the member events here
                 // potentially races with the sync.
@@ -1298,8 +1304,8 @@ impl Default for BaseClient {
 #[cfg(test)]
 mod tests {
     use matrix_sdk_test::{
-        async_test, response_from_file, InvitedRoomBuilder, JoinedRoomBuilder, LeftRoomBuilder,
-        StrippedStateTestEvent, SyncResponseBuilder, TimelineTestEvent,
+        async_test, response_from_file, sync_timeline_event, InvitedRoomBuilder, JoinedRoomBuilder,
+        LeftRoomBuilder, StrippedStateTestEvent, SyncResponseBuilder,
     };
     use ruma::{
         api::{client as api, IncomingResponse},
@@ -1320,19 +1326,17 @@ mod tests {
         let mut ev_builder = SyncResponseBuilder::new();
 
         let response = ev_builder
-            .add_left_room(LeftRoomBuilder::new(room_id).add_timeline_event(
-                TimelineTestEvent::Custom(json!({
-                    "content": {
-                        "displayname": "Alice",
-                        "membership": "left",
-                    },
-                    "event_id": "$994173582443PhrSn:example.org",
-                    "origin_server_ts": 1432135524678u64,
-                    "sender": user_id,
-                    "state_key": user_id,
-                    "type": "m.room.member",
-                })),
-            ))
+            .add_left_room(LeftRoomBuilder::new(room_id).add_timeline_event(sync_timeline_event!({
+                "content": {
+                    "displayname": "Alice",
+                    "membership": "left",
+                },
+                "event_id": "$994173582443PhrSn:example.org",
+                "origin_server_ts": 1432135524678u64,
+                "sender": user_id,
+                "state_key": user_id,
+                "type": "m.room.member",
+            })))
             .build_sync_response();
         client.receive_sync_response(response).await.unwrap();
         assert_eq!(client.get_room(room_id).unwrap().state(), RoomState::Left);
@@ -1494,7 +1498,7 @@ mod tests {
         let mut ev_builder = SyncResponseBuilder::new();
         let response = ev_builder
             .add_joined_room(JoinedRoomBuilder::new(room_id).add_timeline_event(
-                TimelineTestEvent::Custom(json!({
+                sync_timeline_event!({
                     "content": {
                         "displayname": "Alice",
                         "membership": "join",
@@ -1504,7 +1508,7 @@ mod tests {
                     "sender": user_id,
                     "state_key": user_id,
                     "type": "m.room.member",
-                })),
+                }),
             ))
             .build_sync_response();
         client.receive_sync_response(response).await.unwrap();

@@ -73,6 +73,10 @@ pub enum OlmError {
             have a valid Olm session with us"
     )]
     MissingSession,
+
+    /// CryptoID error
+    #[error("CryptoID error")]
+    CryptoIDError,
 }
 
 /// Error representing a failure during a group encryption operation.
@@ -219,6 +223,10 @@ pub enum SignatureError {
     /// The signed object couldn't be deserialized.
     #[error(transparent)]
     JsonError(#[from] CanonicalJsonError),
+
+    /// The store ran into an error.
+    #[error(transparent)]
+    StoreError(#[from] CryptoStoreError),
 }
 
 impl From<SerdeError> for SignatureError {
